@@ -7,6 +7,6 @@ I use Xcode and LLDB to debug my Qt programs, and got tired with there being no 
 Clone this repo somewhere, e.g. ~/qtlldb. Then add the following lines to your ~/.lldbinit:
 
 ```
-command script import ~/qtlldb/QtFormatters.py
-command source ~/qtlldb/QtFormatters.lldb
+command script import ~/qtlldb/GodotFormatters.py
+command source ~/qtlldb/GodotFormatters.lldb
 ```
