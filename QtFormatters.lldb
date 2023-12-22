@@ -1,8 +1,36 @@
-type summary add -x "^.*QUrl$" -e -F QtFormatters.QUrl_SummaryProvider
-type summary add -x "^.*QString$" -e -F QtFormatters.QString_SummaryProvider
-type synthetic add -x "^.*QVector<.+>$" -l QtFormatters.QVector_SyntheticProvider
-type summary add -x "^.*QVector<.+>$" -e -s "size=${svar%#}"
-type synthetic add -x "^.*QList<.+>$" -l QtFormatters.QList_SyntheticProvider
-type summary add -x "^.*QList<.+>$" -e -s "size=${svar%#}"
-type synthetic add -x "^.*QPointer<.+>$" -l QtFormatters.QPointer_SyntheticProvider
-type summary add -x "^.*QPointer<.+>$" -e -s "filled="${svar%#}"
+type summary clear
+type synthetic clear
+type summary add -x "^(::)?String$" -e -F QtFormatters.String_SummaryProvider
+type synthetic add -x "^(::)?Vector<.+>$" -l QtFormatters.Vector_SyntheticProvider
+type summary add -x "^(::)?Vector<.+>$" -e -F QtFormatters.Vector_SummaryProvider
+type synthetic add -x "^(::)?Variant$" -l QtFormatters.Variant_SyntheticProvider
+type summary add -x "^(::)?Variant$" -e -F QtFormatters.Variant_SummaryProvider
+type summary add -x "^(::)?Ref<.+>$" -e -F QtFormatters.Ref_SummaryProvider
+type summary add -x "^(::)?Vector2$" -e -F QtFormatters.Vector2_SummaryProvider
+type summary add -x "^(::)?Vector2i$" -e -F QtFormatters.Vector2i_SummaryProvider
+type summary add -x "^(::)?Rect2$" -e -F QtFormatters.Rect2_SummaryProvider
+type summary add -x "^(::)?Rect2i$" -e -F QtFormatters.Rect2i_SummaryProvider
+type summary add -x "^(::)?Vector3$" -e -F QtFormatters.Vector3_SummaryProvider
+type summary add -x "^(::)?Vector3i$" -e -F QtFormatters.Vector3i_SummaryProvider
+type summary add -x "^(::)?Transform2D$" -e -F QtFormatters.Transform2d_SummaryProvider
+type summary add -x "^(::)?Vector4$" -e -F QtFormatters.Vector4_SummaryProvider
+type summary add -x "^(::)?Vector4i$" -e -F QtFormatters.Vector4i_SummaryProvider
+type summary add -x "^(::)?Plane$" -e -F QtFormatters.Plane_SummaryProvider
+type summary add -x "^(::)?Quaternion$" -e -F QtFormatters.Quaternion_SummaryProvider
+type summary add -x "^(::)?AABB$" -e -F QtFormatters.AABB_SummaryProvider
+type summary add -x "^(::)?Basis$" -e -F QtFormatters.Basis_SummaryProvider
+type summary add -x "^(::)?Transform3D$" -e -F QtFormatters.Transform3d_SummaryProvider
+type summary add -x "^(::)?Projection$" -e -F QtFormatters.Projection_SummaryProvider
+type summary add -x "^(::)?Color$" -e -F QtFormatters.Color_SummaryProvider
+type summary add -x "^(::)?StringName$" -e -F QtFormatters.StringName_SummaryProvider
+type summary add -x "^(::)?NodePath$" -e -F QtFormatters.NodePath_SummaryProvider
+type summary add -x "^(::)?RID$" -e -F QtFormatters.RID_SummaryProvider
+type summary add -x "^(::)?Object$" -e -F QtFormatters.Object_SummaryProvider
+type summary add -x "^(::)?Callable$" -e -F QtFormatters.Callable_SummaryProvider
+type summary add -x "^(::)?Signal$" -e -F QtFormatters.Signal_SummaryProvider
+type summary add -x "^(::)?Array$" -e -F QtFormatters.Array_SummaryProvider
+type synthetic add -x "^(::)?Array$" -l QtFormatters.Array_SyntheticProvider
+type synthetic add -x "^(::)?TypedArray<.+>$" -l QtFormatters.TypedArray_SyntheticProvider
+type synthetic add -x "^(::)?HashMap<.+,.+>$" -l QtFormatters.HashMap_SyntheticProvider
+type synthetic add -x "^(::)?Dictionary$" -l QtFormatters.Dictionary_SyntheticProvider
+type summary add -x "^(::)?HashMapElement<.+,.+>$" -e -F QtFormatters.HashMapElement_SummaryProvider
