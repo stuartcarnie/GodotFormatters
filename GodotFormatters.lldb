@@ -34,3 +34,4 @@ type synthetic add -x "^(::)?TypedArray<.+>$" -l QtFormatters.TypedArray_Synthet
 type synthetic add -x "^(::)?HashMap<.+,.+>$" -l QtFormatters.HashMap_SyntheticProvider
 type synthetic add -x "^(::)?Dictionary$" -l QtFormatters.Dictionary_SyntheticProvider
 type summary add -x "^(::)?HashMapElement<.+,.+>$" -e -F QtFormatters.HashMapElement_SummaryProvider
+type synthetic add -x "^(::)?List<.+>$" -l QtFormatters.List_SyntheticProvider

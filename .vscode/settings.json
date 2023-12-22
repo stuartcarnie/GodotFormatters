@@ -1,0 +1,3 @@
+{
+    "python.analysis.extraPaths": ["/Users/nikita/.vscode/extensions/vadimcn.vscode-lldb-1.10.0/lldb/lib/lldb-python"]
+}

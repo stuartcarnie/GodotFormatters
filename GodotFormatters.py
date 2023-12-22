@@ -204,7 +204,7 @@ class Variant_SyntheticProvider:
                 return str(dataArg.GetFloat(lldb.SBError(), 0))
         elif type == VariantType.OBJECT.value:
             # TODO: do something intelligent here; for now just get the type
-            return "{" + str(data.GetType().GetPointeeType().GetDisplayTypeName()) + "}"
+            return "{" + str(data.GetType().GetPointeeType().GetDisplayTypeName()) + " {...}}"
         else:
             summary = data.GetSummary()
             if not summary:
@@ -260,9 +260,11 @@ def Ref_SummaryProvider(valobj, internal_dict):
         if not summary:
             # get whatever lldb would normally display for this
             # evalaute the expression and return the result
-            frame : lldb.SBFrame = valobj.GetFrame()
-            expr = "*(%s*)%s" % (str(reference.GetType().GetPointeeType().GetName()), str(reference.GetValueAsUnsigned()))
-            summary = str(frame.EvaluateExpression(expr))
+            # frame : lldb.SBFrame = valobj.GetFrame()
+            # expr = "*(%s*)%s" % (str(reference.GetType().GetPointeeType().GetName()), str(reference.GetValueAsUnsigned()))
+            # summary = str(frame.EvaluateExpression(expr))
+            # just do a {...} for now
+            summary = "{" + type.GetDisplayTypeName() + " {...}}"
             
         return summary
     except Exception as e:
@@ -558,6 +560,46 @@ def Vector_SummaryProvider(valobj: lldb.SBValue, internal_dict):
         return Vector_SyntheticProvider(valobj.GetNonSyntheticValue(), internal_dict).get_summary()
     else:
         return Vector_SyntheticProvider(valobj, internal_dict).get_summary()
+
+class List_SyntheticProvider:
+    def __init__(self, valobj, internal_dict):
+            self.valobj = valobj
+    
+    def num_children(self):
+        _data = self.valobj.GetChildMemberWithName('_data')
+        if (_data.GetValueAsUnsigned() == 0):
+            return 0
+        return _data.GetChildMemberWithName('size_cache').GetValueAsUnsigned()
+    def get_child_index(self,name):
+        try:
+            return int(name.lstrip('[').rstrip(']'))
+        except:
+            return None
+    def get_child_at_index(self,index):
+        if index < 0:
+            return None
+        if index >= self.num_children():
+            return None
+        if self.valobj.IsValid() == False:
+            return None
+        try:
+            _data = self.valobj.GetChildMemberWithName('_data')
+            element: lldb.SBValue = _data.GetChildMemberWithName('first')
+            if element.GetValueAsUnsigned() == 0:
+                return None
+            #linked list traversal
+            thing = index
+            for i in range(thing):
+                element = element.GetChildMemberWithName('next_ptr')
+                    
+            # return elements.CreateChildAtOffset('[' + str(index) + ']', index * data_size, element.GetType())
+            value = element.GetChildMemberWithName("value")
+            return element.CreateValueFromData('[' + str(index) + ']', value.GetData(), value.GetType())
+
+            return _ptr.CreateChildAtOffset('[' + str(index) + ']', index * elementSize, type)
+        except:
+            return None
+
 
 class Vector_SyntheticProvider:
     def __init__(self, valobj, internal_dict):
