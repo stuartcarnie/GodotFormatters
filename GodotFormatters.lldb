@@ -1,37 +1,37 @@
 type summary clear
 type synthetic clear
-type summary add -x "^(::)?String$" -e -F QtFormatters.String_SummaryProvider
-type synthetic add -x "^(::)?Vector<.+>$" -l QtFormatters.Vector_SyntheticProvider
-type summary add -x "^(::)?Vector<.+>$" -e -F QtFormatters.Vector_SummaryProvider
-type synthetic add -x "^(::)?Variant$" -l QtFormatters.Variant_SyntheticProvider
-type summary add -x "^(::)?Variant$" -e -F QtFormatters.Variant_SummaryProvider
-type summary add -x "^(::)?Ref<.+>$" -e -F QtFormatters.Ref_SummaryProvider
-type summary add -x "^(::)?Vector2$" -e -F QtFormatters.Vector2_SummaryProvider
-type summary add -x "^(::)?Vector2i$" -e -F QtFormatters.Vector2i_SummaryProvider
-type summary add -x "^(::)?Rect2$" -e -F QtFormatters.Rect2_SummaryProvider
-type summary add -x "^(::)?Rect2i$" -e -F QtFormatters.Rect2i_SummaryProvider
-type summary add -x "^(::)?Vector3$" -e -F QtFormatters.Vector3_SummaryProvider
-type summary add -x "^(::)?Vector3i$" -e -F QtFormatters.Vector3i_SummaryProvider
-type summary add -x "^(::)?Transform2D$" -e -F QtFormatters.Transform2d_SummaryProvider
-type summary add -x "^(::)?Vector4$" -e -F QtFormatters.Vector4_SummaryProvider
-type summary add -x "^(::)?Vector4i$" -e -F QtFormatters.Vector4i_SummaryProvider
-type summary add -x "^(::)?Plane$" -e -F QtFormatters.Plane_SummaryProvider
-type summary add -x "^(::)?Quaternion$" -e -F QtFormatters.Quaternion_SummaryProvider
-type summary add -x "^(::)?AABB$" -e -F QtFormatters.AABB_SummaryProvider
-type summary add -x "^(::)?Basis$" -e -F QtFormatters.Basis_SummaryProvider
-type summary add -x "^(::)?Transform3D$" -e -F QtFormatters.Transform3d_SummaryProvider
-type summary add -x "^(::)?Projection$" -e -F QtFormatters.Projection_SummaryProvider
-type summary add -x "^(::)?Color$" -e -F QtFormatters.Color_SummaryProvider
-type summary add -x "^(::)?StringName$" -e -F QtFormatters.StringName_SummaryProvider
-type summary add -x "^(::)?NodePath$" -e -F QtFormatters.NodePath_SummaryProvider
-type summary add -x "^(::)?RID$" -e -F QtFormatters.RID_SummaryProvider
-type summary add -x "^(::)?Object$" -e -F QtFormatters.Object_SummaryProvider
-type summary add -x "^(::)?Callable$" -e -F QtFormatters.Callable_SummaryProvider
-type summary add -x "^(::)?Signal$" -e -F QtFormatters.Signal_SummaryProvider
-type summary add -x "^(::)?Array$" -e -F QtFormatters.Array_SummaryProvider
-type synthetic add -x "^(::)?Array$" -l QtFormatters.Array_SyntheticProvider
-type synthetic add -x "^(::)?TypedArray<.+>$" -l QtFormatters.TypedArray_SyntheticProvider
-type synthetic add -x "^(::)?HashMap<.+,.+>$" -l QtFormatters.HashMap_SyntheticProvider
-type synthetic add -x "^(::)?Dictionary$" -l QtFormatters.Dictionary_SyntheticProvider
-type summary add -x "^(::)?HashMapElement<.+,.+>$" -e -F QtFormatters.HashMapElement_SummaryProvider
-type synthetic add -x "^(::)?List<.+>$" -l QtFormatters.List_SyntheticProvider
+type summary add -x "^(::)?String$" -e -F GodotFormatters.String_SummaryProvider
+type synthetic add -x "^(::)?Vector<.+>$" -l GodotFormatters.Vector_SyntheticProvider
+type summary add -x "^(::)?Vector<.+>$" -e -F GodotFormatters.Vector_SummaryProvider
+type synthetic add -x "^(::)?Variant$" -l GodotFormatters.Variant_SyntheticProvider
+type summary add -x "^(::)?Variant$" -e -F GodotFormatters.Variant_SummaryProvider
+type summary add -x "^(::)?Ref<.+>$" -e -F GodotFormatters.Ref_SummaryProvider
+type summary add -x "^(::)?Vector2$" -e -F GodotFormatters.Vector2_SummaryProvider
+type summary add -x "^(::)?Vector2i$" -e -F GodotFormatters.Vector2i_SummaryProvider
+type summary add -x "^(::)?Rect2$" -e -F GodotFormatters.Rect2_SummaryProvider
+type summary add -x "^(::)?Rect2i$" -e -F GodotFormatters.Rect2i_SummaryProvider
+type summary add -x "^(::)?Vector3$" -e -F GodotFormatters.Vector3_SummaryProvider
+type summary add -x "^(::)?Vector3i$" -e -F GodotFormatters.Vector3i_SummaryProvider
+type summary add -x "^(::)?Transform2D$" -e -F GodotFormatters.Transform2d_SummaryProvider
+type summary add -x "^(::)?Vector4$" -e -F GodotFormatters.Vector4_SummaryProvider
+type summary add -x "^(::)?Vector4i$" -e -F GodotFormatters.Vector4i_SummaryProvider
+type summary add -x "^(::)?Plane$" -e -F GodotFormatters.Plane_SummaryProvider
+type summary add -x "^(::)?Quaternion$" -e -F GodotFormatters.Quaternion_SummaryProvider
+type summary add -x "^(::)?AABB$" -e -F GodotFormatters.AABB_SummaryProvider
+type summary add -x "^(::)?Basis$" -e -F GodotFormatters.Basis_SummaryProvider
+type summary add -x "^(::)?Transform3D$" -e -F GodotFormatters.Transform3d_SummaryProvider
+type summary add -x "^(::)?Projection$" -e -F GodotFormatters.Projection_SummaryProvider
+type summary add -x "^(::)?Color$" -e -F GodotFormatters.Color_SummaryProvider
+type summary add -x "^(::)?StringName$" -e -F GodotFormatters.StringName_SummaryProvider
+type summary add -x "^(::)?NodePath$" -e -F GodotFormatters.NodePath_SummaryProvider
+type summary add -x "^(::)?RID$" -e -F GodotFormatters.RID_SummaryProvider
+type summary add -x "^(::)?Object$" -e -F GodotFormatters.Object_SummaryProvider
+type summary add -x "^(::)?Callable$" -e -F GodotFormatters.Callable_SummaryProvider
+type summary add -x "^(::)?Signal$" -e -F GodotFormatters.Signal_SummaryProvider
+type summary add -x "^(::)?Array$" -e -F GodotFormatters.Array_SummaryProvider
+type synthetic add -x "^(::)?Array$" -l GodotFormatters.Array_SyntheticProvider
+type synthetic add -x "^(::)?TypedArray<.+>$" -l GodotFormatters.TypedArray_SyntheticProvider
+type synthetic add -x "^(::)?HashMap<.+,.+>$" -l GodotFormatters.HashMap_SyntheticProvider
+type synthetic add -x "^(::)?Dictionary$" -l GodotFormatters.Dictionary_SyntheticProvider
+type summary add -x "^(::)?HashMapElement<.+,.+>$" -e -F GodotFormatters.HashMapElement_SummaryProvider
+type synthetic add -x "^(::)?List<.+>$" -l GodotFormatters.List_SyntheticProvider
