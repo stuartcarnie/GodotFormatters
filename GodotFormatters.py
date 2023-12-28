@@ -240,23 +240,23 @@ def Ref_SummaryProvider(valobj, internal_dict):
         deref: lldb.SBValue = reference.Dereference()
         summary = deref.GetSummary()
         type: lldb.SBType = reference.GetType().GetPointeeType()
-        if not summary:
-            # check for parent types
-            if type.GetNumberOfDirectBaseClasses() > 0:
-                for i in range(type.GetNumberOfDirectBaseClasses()-1, -1, -1):
-                    base_type: lldb.SBType = type.GetDirectBaseClassAtIndex(i).GetType()
-                    # return str(base_type.GetDisplayTypeName())
-                    summary = reference.Cast(base_type.GetPointerType()).Dereference().GetSummary()
-                    if not summary:
-                        summary = reference.Cast(base_type.GetPointerType()).Dereference().GetObjectDescription()
-                    if summary:
-                        break
-            if type.GetNumberOfVirtualBaseClasses() > 0:
-                for i in range(type.GetNumberOfVirtualBaseClasses()-1, -1, -1):
-                    base_type: lldb.SBType = type.GetVirtualBaseClassAtIndex(i).GetType()
-                    summary = reference.Cast(base_type.GetPointerType()).Dereference().GetSummary()
-                    if summary:
-                        break
+        # if not summary:
+        #     # check for parent types
+        #     if type.GetNumberOfDirectBaseClasses() > 0:
+        #         for i in range(type.GetNumberOfDirectBaseClasses()-1, -1, -1):
+        #             base_type: lldb.SBType = type.GetDirectBaseClassAtIndex(i).GetType()
+        #             # return str(base_type.GetDisplayTypeName())
+        #             summary = reference.Cast(base_type.GetPointerType()).Dereference().GetSummary()
+        #             if not summary:
+        #                 summary = reference.Cast(base_type.GetPointerType()).Dereference().GetObjectDescription()
+        #             if summary:
+        #                 break
+        #     if type.GetNumberOfVirtualBaseClasses() > 0:
+        #         for i in range(type.GetNumberOfVirtualBaseClasses()-1, -1, -1):
+        #             base_type: lldb.SBType = type.GetVirtualBaseClassAtIndex(i).GetType()
+        #             summary = reference.Cast(base_type.GetPointerType()).Dereference().GetSummary()
+        #             if summary:
+        #                 break
         if not summary:
             # get whatever lldb would normally display for this
             # evalaute the expression and return the result
