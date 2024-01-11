@@ -2,7 +2,6 @@ type summary clear
 type synthetic clear
 type summary add -x "^(::)?String$" -e -F GodotFormatters.String_SummaryProvider
 type synthetic add -x "^(::)?Vector<.+>$" -l GodotFormatters.Vector_SyntheticProvider
-type summary add -x "^(::)?Vector<.+>$" -e -F GodotFormatters.Vector_SummaryProvider
 type synthetic add -x "^(::)?Variant$" -l GodotFormatters.Variant_SyntheticProvider
 type summary add -x "^(::)?Variant$" -e -F GodotFormatters.Variant_SummaryProvider
 type summary add -x "^(::)?Ref<.+>$" -e -F GodotFormatters.Ref_SummaryProvider

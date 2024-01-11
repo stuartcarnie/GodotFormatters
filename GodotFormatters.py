@@ -73,47 +73,47 @@ def Variant_GetValue(valobj: lldb.SBValue):
             return data.GetChildMemberWithName('_projection')
         elif type == VariantType.STRING.value: #For _mem values, we have to cast them to the correct type
             # find the type for "String" 
-            stringType: lldb.SBType = target.FindFirstType('String')
+            stringType: lldb.SBType = target.FindFirstType('::String')
             string: lldb.SBValue = target.CreateValueFromAddress('string', mem_addr, stringType)
             return string
         elif type == VariantType.VECTOR2.value:
-            vector2Type: lldb.SBType = target.FindFirstType('Vector2')
+            vector2Type: lldb.SBType = target.FindFirstType('::Vector2')
             vector2: lldb.SBValue = target.CreateValueFromAddress('vector2', mem_addr, vector2Type)
             return vector2
         elif type == VariantType.RECT2.value:
-            rect2Type: lldb.SBType = target.FindFirstType('Rect2')
+            rect2Type: lldb.SBType = target.FindFirstType('::Rect2')
             rect2: lldb.SBValue = target.CreateValueFromAddress('rect2', mem_addr, rect2Type)
             return rect2
         elif type == VariantType.VECTOR3.value:
-            vector3Type: lldb.SBType = target.FindFirstType('Vector3')
+            vector3Type: lldb.SBType = target.FindFirstType('::Vector3')
             vector3: lldb.SBValue = target.CreateValueFromAddress('vector3', mem_addr, vector3Type)
             return vector3
         elif type == VariantType.VECTOR4.value:
-            vector4Type: lldb.SBType = target.FindFirstType('Vector4')
+            vector4Type: lldb.SBType = target.FindFirstType('::Vector4')
             vector4: lldb.SBValue = target.CreateValueFromAddress('vector4', mem_addr, vector4Type)
             return vector4
         elif type == VariantType.PLANE.value:
-            planeType: lldb.SBType = target.FindFirstType('Plane')
+            planeType: lldb.SBType = target.FindFirstType('::Plane')
             plane: lldb.SBValue = target.CreateValueFromAddress('plane', mem_addr, planeType)
             return plane
         elif type == VariantType.QUATERNION.value:
-            quaternionType: lldb.SBType = target.FindFirstType('Quaternion')
+            quaternionType: lldb.SBType = target.FindFirstType('::Quaternion')
             quaternion: lldb.SBValue = target.CreateValueFromAddress('quaternion', mem_addr, quaternionType)
             return quaternion
         elif type == VariantType.COLOR.value:
-            colorType: lldb.SBType = target.FindFirstType('Color')
+            colorType: lldb.SBType = target.FindFirstType('::Color')
             color: lldb.SBValue = target.CreateValueFromAddress('color', mem_addr, colorType)
             return color
         elif type == VariantType.STRING_NAME.value:
-            stringNameType: lldb.SBType = target.FindFirstType('StringName')
+            stringNameType: lldb.SBType = target.FindFirstType('::StringName')
             stringName: lldb.SBValue = target.CreateValueFromAddress('stringName', mem_addr, stringNameType)
             return stringName
         elif type == VariantType.NODE_PATH.value:
-            nodePathType: lldb.SBType = target.FindFirstType('NodePath')
+            nodePathType: lldb.SBType = target.FindFirstType('::NodePath')
             nodePath: lldb.SBValue = target.CreateValueFromAddress('nodePath', mem_addr, nodePathType)
             return nodePath
         elif type == VariantType.RID.value:
-            ridType: lldb.SBType = target.FindFirstType('RID')
+            ridType: lldb.SBType = target.FindFirstType('::RID')
             rid: lldb.SBValue = target.CreateValueFromAddress('rid', mem_addr, ridType)
             return rid
         elif type == VariantType.OBJECT.value:
@@ -121,41 +121,47 @@ def Variant_GetValue(valobj: lldb.SBValue):
             objData: lldb.SBValue = target.CreateValueFromAddress('objData', mem_addr, objDataType)
             return objData.GetChildMemberWithName('obj')
         elif type == VariantType.DICTIONARY.value:
-            dictionaryType: lldb.SBType = target.FindFirstType('Dictionary')
+            dictionaryType: lldb.SBType = target.FindFirstType('::Dictionary')
             dictionary: lldb.SBValue = target.CreateValueFromAddress('dictionary', mem_addr, dictionaryType)
             return dictionary
         elif type == VariantType.ARRAY.value:
-            arrayType: lldb.SBType = target.FindFirstType('Array')
+            arrayType: lldb.SBType = target.FindFirstType('::Array')
             array: lldb.SBValue = target.CreateValueFromAddress('array', mem_addr, arrayType)
             return array
         elif type == VariantType.PACKED_BYTE_ARRAY.value:
             packedByteArrayType: lldb.SBType = target.FindFirstType('Variant::PackedArrayRef<unsigned char>')
             packedByteArray: lldb.SBValue = target.CreateValueFromAddress('packedByteArrayref', packed_array_addr, packedByteArrayType)
-            return packedByteArray.CreateValueFromData('packedByteArray', packedByteArray.GetChildMemberWithName('array').GetData(), target.FindFirstType('PackedByteArray'))
+            return packedByteArray.GetChildMemberWithName('array')
         elif type == VariantType.PACKED_INT32_ARRAY.value:
             packedInt64ArrayType: lldb.SBType = target.FindFirstType('Variant::PackedArrayRef<int>')
             packedInt32Array: lldb.SBValue = target.CreateValueFromAddress('packedInt32Arrayref', packed_array_addr, packedInt64ArrayType)
-            return packedInt32Array.CreateValueFromData('packedInt32Array', packedInt32Array.GetChildMemberWithName('array').GetData(), target.FindFirstType('PackedInt32Array'))
+            # return packedInt32Array.CreateValueFromData('packedInt32Array', packedInt32Array.GetChildMemberWithName('array'), target.FindFirstType('::PackedInt32Array'))
+            packedInt32Array.GetChildMemberWithName('array')
         elif type == VariantType.PACKED_INT64_ARRAY.value:
             packedInt64ArrayType: lldb.SBType = target.FindFirstType('Variant::PackedArrayRef<long long>')
-            packedInt64Array: lldb.SBValue = target.CreateValueFromAddress('packedInt64Array', packed_array_addr, packedInt64ArrayType)
-            return packedInt64Array.CreateValueFromData('packedInt64Array', packedInt64Array.GetChildMemberWithName('array').GetData(), target.FindFirstType('PackedInt64Array'))
+            packedInt64Array: lldb.SBValue = target.CreateValueFromAddress('packedInt64Arrayref', packed_array_addr, packedInt64ArrayType)
+            # return packedInt64Array.CreateValueFromData('packedInt64Array', packedInt64Array.GetChildMemberWithName('array'), target.FindFirstType('::PackedInt64Array'))
+            packedInt64Array.GetChildMemberWithName('array')
         elif type == VariantType.PACKED_FLOAT32_ARRAY.value:
             packedFloat32ArrayType: lldb.SBType = target.FindFirstType('Variant::PackedArrayRef<float>')
-            packedFloat32Array: lldb.SBValue = target.CreateValueFromAddress('packedFloat32Array', packed_array_addr, packedFloat32ArrayType)
-            return packedFloat32Array.CreateValueFromData('packedFloat32Array', packedFloat32Array.GetChildMemberWithName('array').GetData(), target.FindFirstType('PackedFloat32Array'))
+            packedFloat32Array: lldb.SBValue = target.CreateValueFromAddress('packedFloat32Arrayref', packed_array_addr, packedFloat32ArrayType)
+            # return packedFloat32Array.CreateValueFromData('packedFloat32Array', packedFloat32Array.GetChildMemberWithName('array'), target.FindFirstType('::PackedFloat32Array'))
+            packedFloat32Array.GetChildMemberWithName('array')
         elif type == VariantType.PACKED_FLOAT64_ARRAY.value:
             packedFloat64ArrayType: lldb.SBType = target.FindFirstType('Variant::PackedArrayRef<double>')
-            packedFloat64Array: lldb.SBValue = target.CreateValueFromAddress('packedFloat64Array', packed_array_addr, packedFloat64ArrayType)
-            return packedFloat64Array.CreateValueFromData('packedFloat64Array', packedFloat64Array.GetChildMemberWithName('array').GetData(), target.FindFirstType('PackedFloat64Array'))
+            packedFloat64Array: lldb.SBValue = target.CreateValueFromAddress('packedFloat64Arrayref', packed_array_addr, packedFloat64ArrayType)
+            # return packedFloat64Array.CreateValueFromData('packedFloat64Array', packedFloat64Array.GetChildMemberWithName('array'), target.FindFirstType('::PackedFloat64Array'))
+            packedFloat64Array.GetChildMemberWithName('array')
         elif type == VariantType.PACKED_STRING_ARRAY.value:
             packedStringArrayType: lldb.SBType = target.FindFirstType('Variant::PackedArrayRef<String>')
-            packedStringArray: lldb.SBValue = target.CreateValueFromAddress('packedStringArray', packed_array_addr, packedStringArrayType)
-            return packedStringArray.CreateValueFromData('packedStringArray', packedStringArray.GetChildMemberWithName('array').GetData(), target.FindFirstType('PackedStringArray'))
+            packedStringArray: lldb.SBValue = target.CreateValueFromAddress('packedStringArrayref', packed_array_addr, packedStringArrayType)
+            # return packedStringArray.CreateValueFromData('packedStringArray', packedStringArray.GetChildMemberWithName('array'), target.FindFirstType('::PackedStringArray'))
+            return packedStringArray.GetChildMemberWithName('array')
         elif type == VariantType.PACKED_COLOR_ARRAY.value:    
             packedColorArrayType: lldb.SBType = target.FindFirstType('Variant::PackedArrayRef<Color>')
-            packedColorArray: lldb.SBValue = target.CreateValueFromAddress('packedColorArray', packed_array_addr, packedColorArrayType)
-            return packedColorArray.CreateValueFromData('packedColorArray', packedColorArray.GetChildMemberWithName('array').GetData(), target.FindFirstType('PackedColorArray'))
+            packedColorArray: lldb.SBValue = target.CreateValueFromAddress('packedColorArrayref', packed_array_addr, packedColorArrayType)
+            # return packedColorArray.CreateValueFromData('packedColorArray', packedColorArray.GetChildMemberWithName('array'), target.FindFirstType('::PackedColorArray'))
+            packedColorArray.GetChildMemberWithName('array')
         else:
             return None
 
@@ -209,6 +215,8 @@ class Variant_SyntheticProvider:
             summary = data.GetSummary()
             if not summary:
                 summary = data.GetObjectDescription()
+            if not summary:
+                summary = data.GetDisplayTypeName()
             return summary
     def num_children(self):
             var_type = self._get_variant_type()
@@ -562,7 +570,7 @@ def Vector_SummaryProvider(valobj: lldb.SBValue, internal_dict):
         return Vector_SyntheticProvider(valobj, internal_dict).get_summary()
 
 class List_SyntheticProvider:
-    def __init__(self, valobj, internal_dict):
+    def __init__(self, valobj: lldb.SBValue, internal_dict):
             self.valobj = valobj
     
     def num_children(self):
@@ -602,7 +610,7 @@ class List_SyntheticProvider:
 
 
 class Vector_SyntheticProvider:
-    def __init__(self, valobj, internal_dict):
+    def __init__(self, valobj: lldb.SBValue, internal_dict):
             self.valobj = valobj
             
     def get_summary(self):
@@ -640,3 +648,38 @@ class Vector_SyntheticProvider:
                 return _ptr.CreateChildAtOffset('[' + str(index) + ']', index * elementSize, type)
             except:
                     return _ptr.CreateChildAtOffset()
+
+class PackedStringArray_SyntheticProvider(Vector_SyntheticProvider):
+    def __init__(self, valobj: lldb.SBValue, internal_dict):
+            # just cast valobj to `Vector<::String>` and use the Vector_SyntheticProvider
+            target = valobj.GetTarget()
+            type: lldb.SBType = target.FindFirstType('::Vector<::String>')
+            # super.__init__(valobj.Cast(type))
+            self.valobj = valobj.Cast(type)
+    def get_summary(self):
+        return "FUCK!"
+
+            
+class PackedColorArray_SyntheticProvider(Vector_SyntheticProvider):
+    def __init__(self, valobj: lldb.SBValue, internal_dict):
+            # just cast valobj to `Vector<::Color>` and use the Vector_SyntheticProvider
+            target = valobj.GetTarget()
+            type: lldb.SBType = target.FindFirstType('::Vector<::Color>')
+            super.__init__(valobj.Cast(type))
+            
+def PackedStringArray_SummaryProvider(valobj: lldb.SBValue, internal_dict):
+    typey = valobj.target.FindFirstType('Vector<String>')
+    if (not typey):
+        return "FUCK"
+    return valobj.target.FindFirstType('Vector<String>').GetDisplayTypeName()
+
+    if (valobj.IsSynthetic()):
+        return PackedStringArray_SyntheticProvider(valobj.GetNonSyntheticValue(), internal_dict).get_summary()
+    else:
+        return PackedStringArray_SyntheticProvider(valobj, internal_dict).get_summary()
+
+def PackedColorArray_SummaryProvider(valobj: lldb.SBValue, internal_dict):
+    if (valobj.IsSynthetic()):
+        return PackedColorArray_SyntheticProvider(valobj.GetNonSyntheticValue(), internal_dict).get_summary()
+    else:
+        return PackedColorArray_SyntheticProvider(valobj, internal_dict).get_summary()
