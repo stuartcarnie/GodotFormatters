@@ -844,7 +844,7 @@ def pointer_exists_and_is_null(ptr: SBValue) -> bool:
 # Cowdata size is located at the cowdata address - 8 bytes (sizeof(uint64_t))
 
 def _get_cowdata_size(_cowdata: SBValue, null_means_zero = True) -> int:
-    global cow_err_str
+    # global cow_err_str
     size = 0
     if not _cowdata or not _cowdata.IsValid():
         # cow_err_str = "COWDATASIZE Invalid: _cowdata is not valid"
@@ -875,7 +875,7 @@ def _get_cowdata_size(_cowdata: SBValue, null_means_zero = True) -> int:
     except Exception as e:
         # cow_err_str = "COWDATASIZE EXCEPTION:" + str(e)
         return None
-    cow_err_str = ""
+    # cow_err_str = ""
     return size
 
 def is_cowdata_valid(_cowdata: SBValue) -> bool:
@@ -885,7 +885,6 @@ def is_cowdata_valid(_cowdata: SBValue) -> bool:
     return True
 
 def get_cowdata_size(_cowdata: SBValue) -> int:
-    global cow_err_str
     # check to see if _ptr is null
     size = _get_cowdata_size(_cowdata)
     if size is None:
@@ -988,9 +987,7 @@ def get_offset_of_object_member(obj: SBValue, member: str) -> int:
     return member_addr_val - element_addr_val
 
 
-def _HashMapElement_GetKeyValue(
-    valobj: SBValue, internal_dict, is_HashMap_Summary=False, str_len = 0, depth = 0
-) -> tuple[str,str]:
+def _HashMapElement_GetKeyValue(valobj: SBValue, internal_dict, is_HashMap_Summary=False, str_len = 0, depth = 0) -> tuple[str,str]:
     if valobj.IsSynthetic():
         valobj = valobj.GetNonSyntheticValue()
     data: SBValue = valobj.GetChildMemberWithName("data")
