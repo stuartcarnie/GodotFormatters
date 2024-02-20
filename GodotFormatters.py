@@ -8,6 +8,7 @@ if typing.TYPE_CHECKING:
 from lldb import eFormatUnicode32, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer
 from lldb import SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger
 from enum import Enum
+import weakref
 
 # Summary string config
 NULL_SUMMARY = "<null>"
@@ -17,9 +18,7 @@ SIZE_SUMMARY = "<size: {0}>"
 SUMM_STR_MAX_LEN = 100
 MAX_DEPTH = 5
 MAX_CHILDREN_IN_SUMMARY = 6
-
-# Synthetic vector-like configs
-SUMMARY_MAX_ELEMENTS = 4
+HASH_MAP_KEY_VAL_LIST_STYLE = False # if true, will display children in HashMaps in a key-value list style (e.g. ["key"] = "value"); if false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")
 
 # Synthetic list-like configs; because linked-lists need to traverse the list to get a specific element, we need to cache the members to be performant.
 NO_CACHE_MEMBERS = False
@@ -328,6 +327,8 @@ def NodePath_SummaryProvider(valobj: SBValue, internal_dict):
         data: SBValue = valobj.GetChildMemberWithName("data")
         if data.GetValueAsUnsigned() == 0:
             return NULL_SUMMARY
+        if not is_valid_pointer(data):
+            return INVALID_SUMMARY
         path = Vector_SyntheticProvider(data.GetChildMemberWithName("path").GetNonSyntheticValue(), internal_dict)
         subpath = Vector_SyntheticProvider(data.GetChildMemberWithName("subpath").GetNonSyntheticValue(), internal_dict)
         path_size = path.num_children()
@@ -659,7 +660,7 @@ def is_string_type(type: SBType):
 def is_basic_integer_type(type:SBType):
     if type.GetTypeClass() == eTypeClassEnumeration:
         return True
-    basic_type: int = type.GetCanonicalType().GetBasicType()
+    basic_type = type.GetCanonicalType().GetBasicType()
     if basic_type == eBasicTypeChar:
         return True
     if basic_type == eBasicTypeSignedChar:
@@ -899,7 +900,7 @@ def GenericShortSummary(
     no_children=False,
     depth = 0
 ):
-    if not valobj.IsValid():
+    if not valobj or not valobj.IsValid():
         return INVALID_SUMMARY
     depth += 1
     START_SUMMARY_LENGTH = summary_length
@@ -938,7 +939,11 @@ def GenericShortSummary(
         else:
             return "{...}"
     else:
-        summ = valobj.GetSummary()
+        try:
+            summ = valobj.GetSummary()
+        except Exception as e:
+            summ = " !!EXCEPTION: " + str(e)
+            summ += " " + str(valobj.GetDisplayTypeName())
     if summ:
         return summ
     if no_children:
@@ -1003,9 +1008,25 @@ def HashMapElement_SummaryProvider(valobj: SBValue, internal_dict, str_len = 0, 
     return fmt_str.format(key, value)
 
 class HashMapElement_SyntheticProvider(SBSyntheticValueProvider):
-    def __init__(self, valobj: SBValue, internal_dict):
-        self.valobj: SBValue = valobj
+    @staticmethod
+    def SummaryProvider(valobj: SBValue, internal_dict):
+        return HashMapElement_SyntheticProvider(valobj, internal_dict, True).get_summary()
+    def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
+        # check if valobj is synthetic, and if so, get the non-synthetic value
+        if valobj.IsSynthetic():
+            self.was_synthetic = True
+            self.valobj = valobj.GetNonSyntheticValue()
+        else:
+            self.valobj: SBValue = valobj
         self.internal_dict = internal_dict
+        self.is_summary: bool = is_summary
+        data: SBValue = self.valobj.GetChildMemberWithName("data")
+        key: SBValue = data.GetChildMemberWithName("key")
+        self.key_template_type: SBType = key.GetType()
+        self.key_val_element_style: bool = False
+        if HASH_MAP_KEY_VAL_LIST_STYLE and (is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type)):
+            self.key_val_element_style = True
+
     def _get_hashmap_keyvalue(self, is_HashMap_Summary=False) -> tuple[SBValue,SBValue]:
         data: SBValue = self.valobj.GetChildMemberWithName("data")
         key: SBValue = data.GetChildMemberWithName("key")
@@ -1045,7 +1066,7 @@ class HashMapElement_SyntheticProvider(SBSyntheticValueProvider):
 
     def get_child_at_index(self, index):
         data: SBValue = self.valobj.GetChildMemberWithName("data")
-        if not data.IsValid() or index < 0 or index > 1:
+        if not data or not data.IsValid() or index < 0 or index > 1:
             return None
         if index == 0:
             key = data.GetChildMemberWithName("key")
@@ -1064,7 +1085,11 @@ class HashMapElement_SyntheticProvider(SBSyntheticValueProvider):
         return True
 
     def get_summary(self):
-        return HashMapElement_SummaryProvider(self.valobj, self.internal_dict)
+        key, value = self.get_key_value_summaries()
+        if self.key_val_element_style and self.was_synthetic:
+            return value
+        else:
+            return "[{0}]: {1}".format(key, value)
 
 def SummaryProviderTemplate(valobj: SBValue, internal_dict, initalizer_function):
     try:
@@ -1085,7 +1110,7 @@ class _VectorLike_SyntheticProvider(SBSyntheticValueProvider):
         self.typename: str = self.type.GetUnqualifiedType().GetDisplayTypeName()
         self._is_summary: bool = is_summary
         self.no_cache = NO_CACHE_MEMBERS
-        self.cache_min = CACHE_MIN if not is_summary else SUMMARY_MAX_ELEMENTS
+        self.cache_min = CACHE_MIN if not is_summary else MAX_CHILDREN_IN_SUMMARY
         self.cache_max = CACHE_MAX
         self._cached_size = 0
         self.update()
@@ -1367,7 +1392,12 @@ class HashMap_SyntheticProvider(_ListLike_SyntheticProvider):
         if self.no_cache or self.num_elements == 0:
             return
         self.cached_elements.clear()
+        self.cached_key_to_idx_map = dict[str, int]()
+        self.cached_idx_to_key_map = dict[int, str]()
         self.key_template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0)
+        self.key_val_element_style: bool = False
+        if HASH_MAP_KEY_VAL_LIST_STYLE and (is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type)):
+            self.key_val_element_style = True
         self._cache_elements(self.cache_min)
 
     def _get_size(self):
@@ -1389,10 +1419,35 @@ class HashMap_SyntheticProvider(_ListLike_SyntheticProvider):
             next: SBValue = tail_element.GetChildMemberWithName("next")
             if not pointer_exists_and_is_null(next):
                 return 0
+            if size >= 2:
+                # check if head_element->next() is valid
+                next: SBValue = head_element.GetChildMemberWithName("next")
+                if not is_valid_pointer(next):
+                    return 0
+                # check if tail_element->prev() is valid
+                prev: SBValue = tail_element.GetChildMemberWithName("prev")
+                if not is_valid_pointer(prev):
+                    return 0
         return size
+    def get_child_index(self, name: str):
+        if self.key_val_element_style:
+            idx = self.cached_key_to_idx_map[(name.lstrip("[").rstrip("]"))]
+            if idx is not None:
+                return idx
+            while len(self.cached_elements) < self.num_elements:
+                new_length = len(self.cached_elements) + self.cache_max
+                if new_length > self.num_elements:
+                    new_length = self.num_elements
+                self._cache_elements(new_length)
+                idx = self.cached_key_to_idx_map[(name.lstrip("[").rstrip("]"))]
+                if idx is not None:
+                    return idx
+            return None
+        else:
+            return int(name.lstrip("[").rstrip("]"))
 
     def _get_child_summary(self, index):
-        if index < 0 or index >= self.num_elements or self.valobj.IsValid() == False:
+        if index < 0 or index >= self.num_elements or not self.valobj or self.valobj.IsValid() == False:
             return None
         element = self._create_child_at_element_index(index)
         key, value = _HashMapElement_GetKeyValue(element, self.internal_dict, True)
@@ -1415,14 +1470,34 @@ class HashMap_SyntheticProvider(_ListLike_SyntheticProvider):
             if start > size:
                 return
             element: SBValue = self.cached_elements[start]
+        if self.key_val_element_style:
+            key = element.GetChildMemberWithName("data").GetChildMemberWithName("key")
+            keySummary = GenericShortSummary(key, self.internal_dict, 0, False, False)
+            self.cached_key_to_idx_map[keySummary] = start
+            self.cached_idx_to_key_map[start] = keySummary
         for _ in range(start + 1, size):
             element = element.GetChildMemberWithName("next")
             if element.GetValueAsUnsigned() == 0:
                 break
             self.cached_elements.append(element)
+            if self.key_val_element_style:
+                key = element.GetChildMemberWithName("data").GetChildMemberWithName("key")
+                keySummary = GenericShortSummary(key, self.internal_dict, 0, False, False)
+                self.cached_key_to_idx_map[keySummary] = len(self.cached_elements) - 1
+                self.cached_idx_to_key_map[len(self.cached_elements) - 1] = keySummary
 
     def _create_synthetic_child(self, element:SBValue, index):
-        return element.CreateValueFromData("[" + str(index) + "]", element.GetData(), element.GetType())
+        if self.key_val_element_style:
+            keyname = ""
+            if index in self.cached_idx_to_key_map:
+                keyname = self.cached_idx_to_key_map[index]
+            else:
+                key = element.GetChildMemberWithName("data").GetChildMemberWithName("key")
+                keyname = GenericShortSummary(key, self.internal_dict, 0, False, False)
+        else:
+            keyname = str(index)
+        value = element.CreateValueFromData("[" + keyname + "]", element.GetData(), element.GetType())
+        return value
 
     def _get_uncached_element_at_index(self, index):
         # linked list, get head_element
@@ -1733,7 +1808,7 @@ SUMMARY_PROVIDERS: list[tuple[str, str]] = [
     ["^(::)?Variant$", "Variant_SummaryProvider"],
     ["^(::)?Signal$", "Signal_SummaryProvider"],
     ["^(::)?ObjectID$", "ObjectID_SummaryProvider"],
-    [HASH_MAP_ELEMENT_PATTERN, "HashMapElement_SummaryProvider"],
+    [HASH_MAP_ELEMENT_PATTERN, SYNTHETIC_PROVIDERS[HASH_MAP_ELEMENT_PATTERN] + ".SummaryProvider"],
     [VMAP_PAIR_PATTERN, "VMap_Pair_SummaryProvider"],
     [DICTIONARY_PATTERN, SYNTHETIC_PROVIDERS[DICTIONARY_PATTERN] + ".SummaryProvider"],
     [VECTOR_PATTERN, SYNTHETIC_PROVIDERS[VECTOR_PATTERN] + ".SummaryProvider"],
