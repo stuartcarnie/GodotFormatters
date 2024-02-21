@@ -409,6 +409,10 @@ def __LLDB_DUMPER():
         'lldb::LogOutputCallback': 'Callable[[str, any], None]',
         'lldb::SBDebuggerDestroyCallback': 'Callable[[int, any], None]'
     }
+    
+    RETURN_TYPE_OVERRIDE_MAP: dict[str, str] = {
+        "GetSummary": "str",
+    }
 
     CLASS_FUNCTION_DECL_MAP: dict[str, str] = {
         'SBCommunication': 'ReadThreadBytesReceived = Callable[[Any, Any, int], None]'
@@ -632,6 +636,8 @@ def __LLDB_DUMPER():
                 return_type = ''
             else:
                 return_type = get_python_type(comps[1])
+            if function_name in RETURN_TYPE_OVERRIDE_MAP:
+                return_type = RETURN_TYPE_OVERRIDE_MAP[function_name]
             # TODO: figure out a way to handle varargs gracefully; right now all we do is just get the return_type then call the other function to get the arg types
             if (len(lines) > 1):
                 func_def = get_function_def_from_inspector(class_name, obj, function_name, indent)
