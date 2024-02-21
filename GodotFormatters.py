@@ -6,61 +6,15 @@
 
 from typing import final, Optional
 
-from lldb import (
-    eFormatBytes,
-    eFormatUnicode32,
-    eNoDynamicValues,
-    eDynamicDontRunTarget,
-    eDynamicCanRunTarget,
-    eBasicTypeInvalid,
-    eBasicTypeVoid,
-    eBasicTypeChar,
-    eBasicTypeSignedChar,
-    eBasicTypeUnsignedChar,
-    eBasicTypeWChar,
-    eBasicTypeSignedWChar,
-    eBasicTypeUnsignedWChar,
-    eBasicTypeChar16,
-    eBasicTypeChar32,
-    eBasicTypeChar8,
-    eBasicTypeShort,
-    eBasicTypeUnsignedShort,
-    eBasicTypeInt,
-    eBasicTypeUnsignedInt,
-    eBasicTypeLong,
-    eBasicTypeUnsignedLong,
-    eBasicTypeLongLong,
-    eBasicTypeUnsignedLongLong,
-    eBasicTypeInt128,
-    eBasicTypeUnsignedInt128,
-    eBasicTypeBool,
-    eBasicTypeHalf,
-    eBasicTypeFloat,
-    eBasicTypeDouble,
-    eBasicTypeLongDouble,
-    eBasicTypeFloatComplex,
-    eBasicTypeDoubleComplex,
-    eBasicTypeLongDoubleComplex,
-    eBasicTypeObjCID,
-    eBasicTypeObjCClass,
-    eBasicTypeObjCSel,
-    eBasicTypeNullPtr,
-    eTypeClassClass,
-    eTypeClassEnumeration,
-    eTypeClassPointer,
-)
-from lldb import (
-    SBValue,
-    SBAddress,
-    SBData,
-    SBType,
-    SBTypeEnumMember,
-    SBTypeEnumMemberList,
-    SBSyntheticValueProvider,
-    SBError,
-    SBTarget,
-    SBDebugger,
-)
+# fmt: off
+from lldb import ( eFormatBytes, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
+                  eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, 
+                  eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, 
+                  eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, 
+                  eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, 
+                  eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer)
+from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger)
+# fmt: on
 from enum import Enum
 import weakref
 import logging
