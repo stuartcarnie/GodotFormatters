@@ -32,16 +32,36 @@ SIZE_SUMMARY = "<size: {0}>"
 SUMM_STR_MAX_LEN = 100
 MAX_DEPTH = 5
 MAX_CHILDREN_IN_SUMMARY = 6
-HASH_MAP_KEY_VAL_LIST_STYLE = True  # if true, will display children in HashMaps in a key-value list style (e.g. ["key"] = "value"); if false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")
 PRINT_VERBOSE = False
 PRINT_TRACE = False
 STRINGS_STILL_32_BIT = True  # if true, strings are still 32-bit
+
 
 # Synthetic list-like configs; because linked-lists need to traverse the list to get a specific element, we need to cache the members to be performant.
 NO_CACHE_MEMBERS = False
 CACHE_MIN = 500
 CACHE_FETCH_MAX = 5000
 
+# Compatibility settings
+
+# If true, will force the usage of compatiblity settings with the MIDebugger interface (i.e. the official MS C++ vscode debugger `cppdbg`)
+# This is only neccessary if you are using the MIDebugger interface, and not the LLDB interface (e.g. `codelldb` debugger extension for vscode)
+MIDEBUGGER_COMPAT = True  
+
+# If true, will display children in HashMaps in a key-value list style (e.g. ["key"] = "value"); if false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")
+g_HASH_MAP_KEY_VAL_LIST_STYLE = False 
+
+# If true, will sanitize string summaries to escape all characters
+g_SANITIZE_STRING_SUMMARY = True
+
+def force_compat(force_mi_compat: bool):
+    if force_mi_compat:
+        global g_HASH_MAP_KEY_VAL_LIST_STYLE
+        global g_SANITIZE_STRING_SUMMARY
+        # MIDebugger refuses to display map children when this is True, forced to False
+        g_HASH_MAP_KEY_VAL_LIST_STYLE = False
+        # MIDebugger chokes and dies when there are mixed escaped and non-escaped quotes in a string summary, so this is forced to be True
+        g_SANITIZE_STRING_SUMMARY = True
 
 class VariantType(Enum):
     NIL = 0
@@ -93,6 +113,26 @@ def print_verbose(val: str):
 def print_trace(val: str):
     if PRINT_TRACE:
         print(val)
+
+# def sanitize_string(string: str) -> str:
+#     # replace all the `"` with `\"`
+#     if not SANITIZE_STRING_SUMMARY:
+#         return string
+#     prefix = ""
+#     suffix = "" 
+#     if string.startswith("U\""):
+#         prefix = "U\""
+#         string = string.removeprefix("U\"")
+#     elif string.startswith("\""):
+#         prefix = "\""
+#         string = string.removeprefix("\"")
+#     if prefix and string.endswith("\""):
+#         suffix = "\""
+#         string = string.removesuffix("\"")
+#     # regex with lookbehind and lookahead to replace all `"` with `\"` except for `\"`
+#     regex = r'(?<!\\)"(?!")'
+#     string = string.replace(regex, '\\"')
+#     return prefix + string + suffix
 
 
 def GetFloat(valobj: SBValue) -> float:
@@ -318,12 +358,15 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
     def get_synth_summary(cls, valobj: SBValue, internal_dict) -> str:
         try:
             obj_id = valobj.GetIndexOfChildWithName("$$object-id$$")
-            if obj_id == None:
+            if obj_id == None or obj_id == UINT32_MAX:
+                # return cls(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
                 return "<EXCEPTION>: No object-id"
             if obj_id not in GodotSynthProvider.synth_by_id:
+                # return cls(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
                 return "<EXCEPTION>: No synth provider for object id " + str(obj_id)
             synth_provider = GodotSynthProvider.synth_by_id[obj_id]
             if synth_provider is None:  # type: ignore
+                # return cls(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
                 return "<EXCEPTION>: No synth provider for object id " + str(obj_id)  # type: ignore
                 # if valobj.IsSynthetic():
                 #     return INVALID_SUMMARY
@@ -697,6 +740,11 @@ def String_SummaryProvider(valobj: SBValue, internal_dict):
             return INVALID_SUMMARY
         _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
         _ptr.format = eFormatUnicode32
+        if g_SANITIZE_STRING_SUMMARY:
+            ret = _ptr.GetSummary()
+            if ret.startswith("U\""):
+                ret = '"' + ret.removeprefix("U\"")
+            return ret
         data = _ptr.GetPointeeData(0, size)
         error: SBError = SBError()
         arr: bytearray = bytearray()
@@ -1150,7 +1198,7 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
         super().__init__(valobj, internal_dict, is_summary)
         self.key_template_type: SBType = self.get_key().GetType()
         self.key_val_element_style: bool = False
-        if HASH_MAP_KEY_VAL_LIST_STYLE and (
+        if g_HASH_MAP_KEY_VAL_LIST_STYLE and (
             is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type)
         ):
             self.key_val_element_style = True
@@ -1497,7 +1545,7 @@ def VMap_Pair_SummaryProvider(valobj: SBValue, internal_dict):
     fmt_str = "[{0}]: {1}"
     key: SBValue = valobj.GetChildMemberWithName("key")
     key_template_type: SBType = key.GetType()
-    if HASH_MAP_KEY_VAL_LIST_STYLE and (is_string_type(key_template_type) or is_basic_integer_type(key_template_type)):
+    if g_HASH_MAP_KEY_VAL_LIST_STYLE and (is_string_type(key_template_type) or is_basic_integer_type(key_template_type)):
         value: SBValue = valobj.GetChildMemberWithName("value")
         return GenericShortSummary(value, internal_dict)
     return fmt_str.format(*_VMap_Pair_get_keypair_summaries(valobj, internal_dict))
@@ -1509,7 +1557,7 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
         if self.num_elements == 0:
             return
         self.key_template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0)
-        if HASH_MAP_KEY_VAL_LIST_STYLE and (
+        if g_HASH_MAP_KEY_VAL_LIST_STYLE and (
             is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type)
         ):
             self.key_val_element_style = True
@@ -1764,7 +1812,7 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
         if self.num_elements == 0:
             return
         self.key_template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0)
-        if HASH_MAP_KEY_VAL_LIST_STYLE and (
+        if g_HASH_MAP_KEY_VAL_LIST_STYLE and (
             is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type)
         ):
             self.key_val_element_style = True
@@ -2130,6 +2178,8 @@ SYNTHETIC_ADD_COMMAND = 'type synthetic add -x "{0}" -l {1}.{2}'
 # SYNTHETIC_DELETE_COMMAND = 'type synthetic delete "{0}"'
 
 def __lldb_init_module(debugger : SBDebugger, dict):
+    # TODO: figure out a way to detect if the debugger has an MI interface attached
+    force_compat(MIDEBUGGER_COMPAT)
     for summary in SUMMARY_PROVIDERS:
         debugger.HandleCommand(SUMMARY_ADD_COMMAND.format(summary[0], __name__, summary[1]))
     for key in SYNTHETIC_PROVIDERS:

@@ -27,3 +27,24 @@ You can also include it in a launch.json configuration for a [codelldb](https://
     "cwd": "${workspaceFolder}"
 }
 ```
+
+It's also possible to use it with the official Microsoft C++ extension debugger (i.e. `cppdbg`), but it is generally recommended to use codelldb instead:
+```json
+{
+    "name": "(lldb) Run tests (editor DEBUG)",
+    "type": "cppdbg",
+    "request": "launch",
+    "program": "${workspaceFolder}/bin/<godot_bin>",
+    "args": [
+        "--test"
+    ],
+    "MIMode": "lldb",
+    "setupCommands": [
+        {
+            "text": "command script import ~/GodotFormatters/lldb_godot_formatters.py",
+            "description": "Godot Visualizers"
+        }
+    ],
+    "cwd": "${workspaceFolder}"
+}
+```
