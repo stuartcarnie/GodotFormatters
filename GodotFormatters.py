@@ -17,9 +17,7 @@ from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeE
 # fmt: on
 from enum import Enum
 import weakref
-import logging
 
-log = logging.getLogger(__name__)
 UINT32_MAX = 4294967295
 INT32_MAX = 2147483647
 
@@ -85,7 +83,7 @@ class VariantType(Enum):
 
 
 def print_verbose(val: str):
-    if PRINT_VERBOSE:
+    if PRINT_VERBOSE or PRINT_TRACE:
         print(val)
 
 
@@ -367,7 +365,7 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
         try:
             return self.get_index_of_child(name)
         except Exception as e:
-            log.exception("%s", e)
+            print_verbose(str(e))
             raise e
 
     def get_index_of_child(self, name: str) -> Optional[int]:
