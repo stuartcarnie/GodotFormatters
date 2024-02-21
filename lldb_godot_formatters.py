@@ -1,5 +1,8 @@
 # Description: Godot formatters for lldb
 
+# Add the following lines to your ~/.lldbinit, or run this line directly in the debug console:
+# `command script import <PATH_TO_SCRIPT>/lldb_godot_formatters.py`
+
 # import typing  # type: ignore
 # if typing.TYPE_CHECKING:  # type: ignore
 #     from typings import lldb # type: ignore
