@@ -7,7 +7,7 @@ I use LLDB to debug the Godot engine, and got tired with there being no visualiz
 Clone this repo somewhere, e.g. ~/GodotFormatters. Then add the following lines to your ~/.lldbinit, or run this line directly in the debug console:
 
 ```
-command script import ~/GodotFormatters/GodotFormatters.py
+command script import ~/GodotFormatters/lldb_godot_formatters.py
 ```
 
 You can also include it in a launch.json configuration for a [codelldb](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) debug configuration by putting it in the `initCommands` section, like so:
@@ -22,7 +22,7 @@ You can also include it in a launch.json configuration for a [codelldb](https://
         "--test"
     ],
     "initCommands": [
-        "command script import ~/GodotFormatters/GodotFormatters.py"
+        "command script import ~/GodotFormatters/lldb_godot_formatters.py"
     ],
     "cwd": "${workspaceFolder}"
 }
