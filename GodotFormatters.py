@@ -4,7 +4,7 @@
 # if typing.TYPE_CHECKING:  # type: ignore
 #     from typings import lldb # type: ignore
 
-from typing import Final, final, overload, Type
+from typing import final, Optional
 
 from lldb import (
     eFormatBytes,
@@ -405,7 +405,7 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
 
     # Don't override this, override get_index_of_child instead
     @final
-    def get_child_index(self, name: str) -> int | None:
+    def get_child_index(self, name: str) -> Optional[int]:
         if name == "$$object-id$$":
             return self.obj_id
         try:
@@ -414,7 +414,7 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
             log.exception("%s", e)
             raise e
 
-    def get_index_of_child(self, name: str) -> int | None:
+    def get_index_of_child(self, name: str) -> Optional[int]:
         raise Exception("Not implemented")
 
     # _SBSyntheticValueProviderWithSummary
@@ -1024,7 +1024,7 @@ def pointer_exists_and_is_null(ptr: SBValue) -> bool:
 # Cowdata size is located at the cowdata address - 8 bytes (sizeof(uint64_t))
 
 
-def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> int | None:
+def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
     # global cow_err_str
     size = 0
     if not _cowdata or not _cowdata.IsValid():
@@ -1328,7 +1328,7 @@ class _List_SyntheticProvider(GodotSynthProvider):
     def has_children(self) -> bool:
         return self.num_elements > 0
 
-    def get_index_of_child(self, name: str) -> int | None:
+    def get_index_of_child(self, name: str) -> Optional[int]:
         try:
             return int(name.lstrip("[").rstrip("]"))
         except:
@@ -1417,7 +1417,7 @@ class PagedArray_SyntheticProvider(_List_SyntheticProvider):
         name = "[" + str(index) + "]"
         return self.create_child_at_real_index(index, name)
 
-    def create_child_at_real_index(self, index, name) -> SBValue | None:
+    def create_child_at_real_index(self, index, name) -> Optional[SBValue]:
         if index < 0 or index >= self.num_elements or not self.ptr:
             return None
         page_index = index >> self.page_size_shift
@@ -1588,7 +1588,7 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
             return "INVALID"
         return "[{0}]: {1}".format(key, value)
 
-    def get_key_by_index(self, index: int) -> str | None:
+    def get_key_by_index(self, index: int) -> Optional[str]:
         if index < 0 or index >= self.num_elements:
             return None
         if self.no_cache:
@@ -1612,7 +1612,7 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
         key = self.get_key_by_index(index) if self.key_val_element_style else str(index)
         return self.create_child_at_real_index(index, f"[{key}]")
 
-    def get_index_of_key(self, key: str) -> int | None:
+    def get_index_of_key(self, key: str) -> Optional[int]:
         if self.no_cache:
             for i in range(self.num_elements):
                 child = self.ptr_cast.GetChildAtIndex(i, eDynamicCanRunTarget, True)
@@ -1948,7 +1948,7 @@ class RBMap_SyntheticProvider(HashMap_SyntheticProvider):
 class _Proxy_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj, internal_dict, is_summary=False):
         super().__init__(valobj, internal_dict, is_summary)
-        self.synth_proxy = None
+        self.synth_proxy: _List_SyntheticProvider = None
         self.update()
 
     def update(self):
