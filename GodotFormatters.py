@@ -3,12 +3,15 @@
 
 import lldb
 import typing
+from typing import Final, final, overload
 if typing.TYPE_CHECKING:
     from typing import lldb
-from lldb import eFormatUnicode32, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer
+from lldb import eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer
 from lldb import SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger
 from enum import Enum
 import weakref
+import logging
+log = logging.getLogger(__name__)
 
 # Summary string config
 NULL_SUMMARY = "<null>"
@@ -18,12 +21,12 @@ SIZE_SUMMARY = "<size: {0}>"
 SUMM_STR_MAX_LEN = 100
 MAX_DEPTH = 5
 MAX_CHILDREN_IN_SUMMARY = 6
-HASH_MAP_KEY_VAL_LIST_STYLE = False # if true, will display children in HashMaps in a key-value list style (e.g. ["key"] = "value"); if false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")
+HASH_MAP_KEY_VAL_LIST_STYLE = True # if true, will display children in HashMaps in a key-value list style (e.g. ["key"] = "value"); if false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")
 
 # Synthetic list-like configs; because linked-lists need to traverse the list to get a specific element, we need to cache the members to be performant.
 NO_CACHE_MEMBERS = False
 CACHE_MIN = 500
-CACHE_MAX = 5000
+CACHE_FETCH_MAX = 5000
 
 class VariantType(Enum):
     NIL = 0
@@ -238,13 +241,86 @@ def Variant_SummaryProvider(valobj: SBValue, internal_dict):
     else:
         return Variant_SyntheticProvider(valobj, internal_dict).get_summary()
 
-class Variant_SyntheticProvider:
-    def __init__(self, valobj: SBValue, internal_dict):
+class _SBSyntheticValueProviderWithSummary(SBSyntheticValueProvider):
+    def get_summary(self) -> str:
+        raise Exception('Not implemented')
+
+class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
+    synth_by_id: weakref.WeakValueDictionary[int, _SBSyntheticValueProviderWithSummary] = weakref.WeakValueDictionary()
+    next_id = 0
+    @classmethod
+    def get_synth_summary(cls, valobj: SBValue, internal_dict) -> str:
+        try:
+            obj_id = valobj.GetIndexOfChildWithName('$$object-id$$')
+            if not obj_id:
+                return "EXCEPTION: No object id"
+            if obj_id not in GodotSynthProvider.synth_by_id:
+                return "EXCEPTION: No synth provider for object id " + str(obj_id)
+            synth_provider = GodotSynthProvider.synth_by_id[obj_id]
+            if synth_provider is None:
+                return INVALID_SUMMARY
+                if valobj.IsSynthetic():
+                    return INVALID_SUMMARY
+                else:
+                    synth_provider = cls(valobj.GetNonSyntheticValue(), internal_dict, True)
+        except Exception as e:
+            log.exception('%s', e)
+            return "EXCEPTION GodotSynthProvider before get_summary(): " + str(e)
+        try:
+            return synth_provider.get_summary()
+        except Exception as e:
+            log.exception('%s', e)
+            return "EXCEPTION GodotSynthProvider get_summary(): " + str(e)
+
+    
+    
+    def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         self.valobj = valobj
         self.internal_dict = internal_dict
+        self.is_summary = is_summary
+        self.obj_id = GodotSynthProvider.next_id
+        GodotSynthProvider.synth_by_id[self.obj_id] = self
+        GodotSynthProvider.next_id += 1
+        
+    # SBSyntheticValueProvider, override these
+    def num_children(self):
+        raise Exception('Not implemented')
 
+    def update(self):
+        pass
+
+    def has_children(self):
+        raise Exception('Not implemented')
+    
+    def get_child_at_index(self,idx):
+        raise Exception('Not implemented')
+
+    # Don't override this, override get_index_of_child instead
+    @final
+    def get_child_index(self, name: str):
+        if name == '$$object-id$$':
+            return self.obj_id
+        try:
+            return self.get_index_of_child(name)
+        except Exception as e:
+            log.exception('%s', e)
+            raise e
+
+    def get_index_of_child(self, name: str):
+        raise Exception('Not implemented')
+        
+    # _SBSyntheticValueProviderWithSummary
+    def get_summary(self) -> str:
+        return GenericShortSummary(self.valobj, self.internal_dict)
+
+
+
+class Variant_SyntheticProvider(GodotSynthProvider):
     def _get_variant_type(self):
         return self.valobj.GetChildMemberWithName("type").GetValueAsUnsigned()
+
+    def update(self):
+        pass
 
     def get_summary(self):
         type = self._get_variant_type()
@@ -291,7 +367,7 @@ class Variant_SyntheticProvider:
     def has_children(self):
         return self.num_children() != 0
 
-    def get_child_index(self, name: str):
+    def get_index_of_child(self, name: str):
         return 0 if self.has_children() else None
 
     def get_child_at_index(self, index):
@@ -399,7 +475,7 @@ def Callable_SummaryProvider(valobj: SBValue, internal_dict):
             obj_id: SBValue = valobj.GetChildMemberWithName("object")
             obj_id_val = obj_id.GetValueAsUnsigned()
             if obj_id_val == 0:
-                return "{<Callable> " + NULL_SUMMARY + ""
+                return "{<Callable> " + NULL_SUMMARY + "}"
             return "{{<Callable> object:{0}, method:{1}}}".format(
                 obj_id_val, method_name
             )
@@ -1007,19 +1083,9 @@ def HashMapElement_SummaryProvider(valobj: SBValue, internal_dict, str_len = 0, 
     key, value = _HashMapElement_GetKeyValue(valobj, internal_dict, False, str_len, depth)
     return fmt_str.format(key, value)
 
-class HashMapElement_SyntheticProvider(SBSyntheticValueProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return HashMapElement_SyntheticProvider(valobj, internal_dict, True).get_summary()
+class HashMapElement_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
-        # check if valobj is synthetic, and if so, get the non-synthetic value
-        if valobj.IsSynthetic():
-            self.was_synthetic = True
-            self.valobj = valobj.GetNonSyntheticValue()
-        else:
-            self.valobj: SBValue = valobj
-        self.internal_dict = internal_dict
-        self.is_summary: bool = is_summary
+        super().__init__(valobj, internal_dict, is_summary)
         data: SBValue = self.valobj.GetChildMemberWithName("data")
         key: SBValue = data.GetChildMemberWithName("key")
         self.key_template_type: SBType = key.GetType()
@@ -1033,7 +1099,7 @@ class HashMapElement_SyntheticProvider(SBSyntheticValueProvider):
         value: SBValue = data.GetChildMemberWithName("value")
         return key, value
 
-    def get_child_index(self,name):
+    def get_index_of_child(self,name):
         if name == "[key]":
             return 0
         elif name == "[value]":
@@ -1086,7 +1152,7 @@ class HashMapElement_SyntheticProvider(SBSyntheticValueProvider):
 
     def get_summary(self):
         key, value = self.get_key_value_summaries()
-        if self.key_val_element_style and self.was_synthetic:
+        if self.key_val_element_style:
             return value
         else:
             return "[{0}]: {1}".format(key, value)
@@ -1102,22 +1168,16 @@ def SummaryProviderTemplate(valobj: SBValue, internal_dict, initalizer_function)
     
     
 
-class _VectorLike_SyntheticProvider(SBSyntheticValueProvider):
+class _WithChildren_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
-        self.valobj: SBValue = valobj
-        self.internal_dict = internal_dict
+        super().__init__(valobj, internal_dict, is_summary)
         self.type: SBType = valobj.GetType()
         self.typename: str = self.type.GetUnqualifiedType().GetDisplayTypeName()
-        self._is_summary: bool = is_summary
         self.no_cache = NO_CACHE_MEMBERS
         self.cache_min = CACHE_MIN if not is_summary else MAX_CHILDREN_IN_SUMMARY
-        self.cache_max = CACHE_MAX
+        self.cache_fetch_max = CACHE_FETCH_MAX
         self._cached_size = 0
         self.update()
-
-    @property
-    def is_summary(self) -> bool:
-        return self._is_summary
 
     @property
     def num_elements(self) -> int:
@@ -1134,15 +1194,22 @@ class _VectorLike_SyntheticProvider(SBSyntheticValueProvider):
         """
         raise Exception("Not implemented")
 
-    def _get_size(self) -> int:
+    def get_len(self, obj: SBValue) -> int:
         """
             Override this method to return the non-cached number of elements in this vector-like object
         """
         raise Exception("Not implemented")
     
+    def get_ptr(self, obj:SBValue) -> SBValue:
+        """
+            Override this method to return the ptr to the first element; in arrays, this would just be the array pointer, in linked lists, this would be the head
+        """
+        raise Exception("Not implemented")
+
     def _create_child_at_element_index(self, index) -> SBValue:
         """
         Override this method to return the synthetic child at the given index
+        @param index: The index of the child to create
         """
         raise Exception("Not implemented")
 
@@ -1182,7 +1249,7 @@ class _VectorLike_SyntheticProvider(SBSyntheticValueProvider):
     def has_children(self):
         return True
 
-    def get_child_index(self, name: str):
+    def get_index_of_child(self, name: str):
         try:
             return int(name.lstrip("[").rstrip("]"))
         except:
@@ -1197,95 +1264,68 @@ class _VectorLike_SyntheticProvider(SBSyntheticValueProvider):
         except Exception as e:
             return "<ERROR>: " + str(e)
 
-class Vector_SyntheticProvider(_VectorLike_SyntheticProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return SummaryProviderTemplate(valobj, internal_dict, __class__)
 
+class _ArrayLike_SyntheticProvider(_WithChildren_SyntheticProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
-        self.template_type: SBType
-        self.element_size: int
-        self._ptr: SBValue
+        self.item_type: SBType
+        self.item_size: int
+        self.ptr: SBValue
         super().__init__(valobj, internal_dict, is_summary)
 
     def update(self):
-        try:
-            self.num_elements = self._get_size()
-            self.template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0)
-            self.element_size: int = self._get_element_size()
-            self._ptr: SBValue = self.valobj.GetChildMemberWithName("_cowdata").GetChildMemberWithName("_ptr") if self.num_elements > 0 else None
-        except Exception as e:
-            err_str = "EXCEPTION: " + str(e)
-            raise Exception(err_str)
-    def _get_element_size(self):
-        return self.valobj.GetType().GetTemplateArgumentType(0).GetByteSize()
-    def _get_size(self):
-        try:               
-            return get_cowdata_size(self.valobj.GetChildMemberWithName("_cowdata"))
-        except Exception as e:
-            raise Exception("EXCEPTION: " + str(e))
+        """
+        Updates num_elements and ptr
+        """
+        self.num_elements = self.get_len(self.valobj)
+        self.ptr: SBValue = self.get_ptr(self.valobj)
+        self.item_type: SBType = self.ptr.GetType().GetPointeeType() if self.ptr else None
+        self.item_size: int = self.item_type.GetByteSize() if self.item_type else 0
 
-    def _create_child_at_element_index(self, index):
-        return self.create_child_at_real_index(index, "[" + str(index) + "]")
-    
+    def _create_child_at_element_index(self, index) -> SBValue:
+        name = "[" + str(index) + "]"
+        return self.create_child_at_real_index(index, name)
+
     # Helper function for proxy providers.
     def create_child_at_real_index(self, index, name):
-        if index < 0 or index >= self.num_elements or not self._ptr:
+        if index < 0 or index >= self.num_elements or not self.ptr:
             return None
         try:
-            return self._ptr.CreateChildAtOffset(name, self.get_offset_at_index(index), self.template_type)
+            return self.ptr.CreateChildAtOffset(name, index * self.item_size, self.item_type)
         except:
             return None
-    def get_offset_at_index(self, index):
-        return index * self.element_size
+        
 
-class HashSet_SyntheticProvider(_VectorLike_SyntheticProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return SummaryProviderTemplate(valobj, internal_dict, __class__)
+class Vector_SyntheticProvider(_ArrayLike_SyntheticProvider):
+    def get_ptr(self, obj:SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("_cowdata").GetChildMemberWithName("_ptr")
+    
+    def get_len(self, obj: SBValue):
+        return get_cowdata_size(obj.GetChildMemberWithName("_cowdata"))
 
-    def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
-        super().__init__(valobj, internal_dict, is_summary)
+class HashSet_SyntheticProvider(_ArrayLike_SyntheticProvider):
+    def get_ptr(self, obj:SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("keys")
 
-    def update(self):
-        self.num_elements = self._get_size()
-        self.template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0)
-        self.element_size = self.template_type.GetByteSize()
-        self.keys: SBValue = self.valobj.GetChildMemberWithName("keys") if self.num_elements > 0 else None
-
-    def _get_size(self):
+    def get_len(self, obj: SBValue):
         try:
-            num = self.valobj.GetChildMemberWithName("num_elements").GetValueAsUnsigned()
+            num = obj.GetChildMemberWithName("num_elements").GetValueAsUnsigned()
             if num > 0:
-                keys: SBValue = self.valobj.GetChildMemberWithName("keys")
+                keys: SBValue = obj.GetChildMemberWithName("keys")
                 if (not is_valid_pointer(keys)):
                     return 0
-                # check the last element to see if it's valid
-                last_val: SBValue = keys.GetChildAtIndex(num - 1, eDynamicCanRunTarget, True)
+                array_type = keys.GetType().GetPointeeType().GetArrayType(num).GetPointerType()
+                last_val: SBValue = keys.Cast(array_type.GetPointerType()).GetChildAtIndex(num - 1, eDynamicCanRunTarget, True)
                 if (not last_val.IsValid()):
                     return 0
-            return self.valobj.GetChildMemberWithName("num_elements").GetValueAsUnsigned()
+            return num
         except:
             return 0
 
-    def _create_child_at_element_index(self, index):
-        if index < 0 or index >= self.num_elements or not self.valobj or self.valobj.IsValid() == False:
-            return None
-        if not self.keys:
-            return None
-        try:
-            return self.keys.CreateChildAtOffset(
-                "[" + str(index) + "]", index * self.element_size, self.template_type
-            )
-        except:
-            return None
 
 
 def _VMap_Pair_get_keypair_summaries(
     valobj: SBValue, internal_dict, is_VMap_Summary=False
 ) -> tuple[str,str]:
-    if valobj.IsSynthetic():
-        valobj = valobj.GetNonSyntheticValue()
     key: SBValue = valobj.GetChildMemberWithName("key")
     value: SBValue = valobj.GetChildMemberWithName("value")
     key_summary = GenericShortSummary(key, internal_dict, 0, False, is_VMap_Summary)
@@ -1294,157 +1334,297 @@ def _VMap_Pair_get_keypair_summaries(
 
 def VMap_Pair_SummaryProvider(valobj: SBValue, internal_dict):
     fmt_str = "[{0}]: {1}"
+    key: SBValue = valobj.GetChildMemberWithName("key")
+    key_template_type: SBType = key.GetType()
+    if HASH_MAP_KEY_VAL_LIST_STYLE and (is_string_type(key_template_type) or is_basic_integer_type(key_template_type)):
+        value: SBValue = valobj.GetChildMemberWithName("value")
+        return GenericShortSummary(value, internal_dict)
     return fmt_str.format(*_VMap_Pair_get_keypair_summaries(valobj, internal_dict))
 
-class VMap_SyntheticProvider(_VectorLike_SyntheticProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return SummaryProviderTemplate(valobj, internal_dict, __class__)
-
-    def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
-        super().__init__(valobj, internal_dict, is_summary)
-
+class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
     def update(self):
-        try:
-            self.num_elements = self._get_size()
-            self._cowdata: SBValue = None
-            self.pair_type: SBType = None
-            self.pair_type_size: int = 0
-            self._ptr: SBValue = None
-            if (self.num_elements == 0):
-                return
-            self._cowdata: SBValue = self.valobj.GetChildMemberWithName("_cowdata")
-            self.pair_type: SBType = self._cowdata.GetType().GetTemplateArgumentType(0)
-            self.pair_type_size: int = self.pair_type.GetByteSize()
-            self._ptr: SBValue = self.valobj.GetChildMemberWithName("_cowdata").GetChildMemberWithName("_ptr")
-        except Exception as e:
-            err_str = "EXCEPTION: " + str(e)
-            raise Exception(err_str)
+        super().update()
+        self.key_template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0)
+        if HASH_MAP_KEY_VAL_LIST_STYLE and (is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type)):
+            self.key_val_element_style = True
+        pointer_to_array_type = self.ptr.GetType().GetPointeeType().GetArrayType(self.num_elements).GetPointerType()
+        self.ptr_cast = self.ptr.Cast(pointer_to_array_type)
+        self.cached_key_summaries = list[str]()
+        self.cached_key_to_idx_map = dict[str, int]()
+        self.cache_elements(self.cache_min)
 
-    def _get_size(self):
+    def get_len(self, obj: SBValue):
         try:
-            return get_cowdata_size(self.valobj.GetChildMemberWithName("_cowdata"))
+            return get_cowdata_size(obj.GetChildMemberWithName("_cowdata"))
         except Exception as e:
             raise Exception("EXCEPTION: " + str(e))
+
+    def get_ptr(self, obj:SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("_cowdata").GetChildMemberWithName("_ptr")
+    
+    def cache_elements(self, size: int):
+        if size > self.num_elements:
+            size = self.num_elements
+        if len(self.cached_key_summaries) >= size or size == 0:
+            return
+        start = len(self.cached_key_summaries)
+        for i in range(start, size):
+            child = self.ptr_cast.GetChildAtIndex(i, eDynamicCanRunTarget, True)
+            if not child.IsValid():
+                continue
+            # get the key summary
+            key: SBValue = child.GetChildMemberWithName("key")
+            key_summary = GenericShortSummary(key, self.internal_dict)
+            self.cached_key_summaries.append(key_summary)
+            self.cached_key_to_idx_map[key_summary] = i
 
     def _get_child_summary(self, index):
         if index < 0 or index >= self.num_elements or self.valobj.IsValid() == False:
             return None
         element = self._create_child_at_element_index(index)
+        key, value = _VMap_Pair_get_keypair_summaries(element, self.internal_dict, True)
         if not element or not element.IsValid():
             return "INVALID"
-        key, value = _VMap_Pair_get_keypair_summaries(element, self.internal_dict, True)
         return "[{0}]: {1}".format(key, value)
 
-    def _create_child_at_element_index(self, index):
-        if not self._ptr or index < 0 or index >= self.num_elements:
+    def get_key_by_index(self, index):
+        if self.no_cache:
+            child = self.ptr_cast.GetChildAtIndex(index, eDynamicCanRunTarget, True)
+            key: SBValue = child.GetChildMemberWithName("key")
+            key_summary = GenericShortSummary(key, self.internal_dict)
+            return key_summary
+        if index < 0 or index >= self.num_elements:
             return None
-        try:
-            return self._ptr.CreateChildAtOffset("[" + str(index) + "]", index * self.pair_type_size, self.pair_type)
-        except:
-            return None
+        if index < len(self.cached_key_summaries):
+            return self.cached_key_summaries[index]
+        # otherwise, start caching
+        while len(self.cached_key_summaries) < self.num_elements:
+            new_length = len(self.cached_key_summaries) + self.cache_fetch_max
+            if new_length > self.num_elements:
+                new_length = self.num_elements
+            self.cache_elements(new_length)
+            if new_length >= index:
+                break
+        # raise Exception("Index length == " + str(len(self.cached_key_summaries)) + " num_elements == " + str(self.num_elements) + " index == " + str(index) + " cached_key_summaries == " + str(self.cached_key_summaries) + " cached_key_to_idx_map == " + str(self.cached_key_to_idx_map))
+        return self.cached_key_summaries[index]
 
-class _ListLike_SyntheticProvider(_VectorLike_SyntheticProvider):
+    def _create_child_at_element_index(self, index) -> SBValue:
+        key = self.get_key_by_index(index) if self.key_val_element_style else str(index)
+        return self.create_child_at_real_index(index, f'[{key}]')
+
+    def get_index_of_key(self, key: str):
+        if self.no_cache:
+            for i in range(self.num_elements):
+                child = self.ptr_cast.GetChildAtIndex(i, eDynamicCanRunTarget, True)
+                key: SBValue = child.GetChildMemberWithName("key")
+                key_summary = GenericShortSummary(key, self.internal_dict)
+                if key_summary == key:
+                    return i
+            return None
+        idx = self.cached_key_to_idx_map[key]
+        if idx is not None:
+            return idx
+        # start caching
+        while len(self.cached_key_summaries) < self.num_elements:
+            new_length = len(self.cached_key_summaries) + self.cache_fetch_max
+            if new_length > self.num_elements:
+                new_length = self.num_elements
+            self.cache_elements(new_length)
+            idx = self.cached_key_to_idx_map[key]
+            if idx is not None:
+                return idx
+        return None
+
+    def get_index_of_child(self, name: str):
+        if self.key_val_element_style:
+            return self.get_index_of_key(name.lstrip("[").rstrip("]"))
+        else:
+            return int(name.lstrip("[").rstrip("]"))
+
+class _LinkedListLike_SyntheticProvider(_WithChildren_SyntheticProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
         self.cached_elements: list[SBValue] = list[SBValue]()
         super().__init__(valobj, internal_dict, is_summary)
 
-    def _cache_elements(self, size: int):
-        """
-            Override this method to cache non-synthetic elements from the list-like object
-        """
-        raise Exception("Not implemented")
-    def _get_uncached_element_at_index(self, index):
-        raise Exception("Not implemented")
     def _create_synthetic_child(self, element:SBValue, index):
         raise Exception("Not implemented")
+    def get_tail(self, obj: SBValue) -> SBValue:
+        raise Exception("Not implemented")
+    def get_list_element_next(self, element: SBValue) -> SBValue:
+        raise Exception("Not implemented")
+    def get_list_element_prev(self, element: SBValue) -> SBValue:
+        raise Exception("Not implemented")
+    def get_list_element_value(self, element: SBValue) -> SBValue:
+        raise Exception("Not implemented")
+
+
+    def _cache_elements(self, size: int):
+        if self.num_elements == 0 or size == 0:
+            return
+        if size > self.num_elements:
+            size = self.num_elements
+        start = 0
+        element: SBValue
+        if len(self.cached_elements) == 0:
+            element = self.get_ptr(self.valobj)
+            self.cached_elements.append(element)
+        else:
+            start = len(self.cached_elements) - 1
+            if start > size:
+                return
+            element = self.cached_elements[start]
+        for _ in range(start + 1, size):
+            element = self.get_list_element_next(element)
+            if element.GetValueAsUnsigned() == 0:
+                break
+            self.cached_elements.append(element)
+
+
+    def check_valid(self, obj: SBValue) -> bool:
+        size = self.get_len(obj)
+        if size > 0:
+            # check if head_element is valid
+            head_element: SBValue = self.get_ptr(obj)
+            if not is_valid_pointer(head_element):
+                return False
+            # check if head_element->prev() is nullptr (it should be if the size is > 0)
+            prev: SBValue = self.get_list_element_prev(head_element)
+            if not pointer_exists_and_is_null(prev):
+                return False
+            # check if tail_element is valid
+            tail_element: SBValue = self.get_tail(obj)
+            if not is_valid_pointer(tail_element):
+                return False
+            # check if tail_element->next() is nullptr (it should be if the size is > 0)
+            next: SBValue = self.get_list_element_next(tail_element)
+            if not pointer_exists_and_is_null(next):
+                return False
+            if size >= 2:
+                # check if head_element->next() is valid
+                next: SBValue = self.get_list_element_next(head_element)
+                if not is_valid_pointer(next):
+                    return False
+                # check if tail_element->prev() is valid
+                prev: SBValue = self.get_list_element_prev(tail_element)
+                if not is_valid_pointer(prev):
+                    return False
+        return True
 
     def update(self):
-        self.num_elements = self._get_size()
+        self.num_elements = self.get_len(self.valobj)
+        if self.check_valid(self.valobj) == False:
+            self.num_elements = 0
+        self.cached_elements.clear()
         if self.no_cache or self.num_elements == 0:
             return
-        self.cached_elements.clear()
         self._cache_elements(self.cache_min)
+
+    def _get_uncached_element_at_index(self, index) -> SBValue:
+        if index < 0 or index >= self.num_elements or self.valobj.IsValid() == False:
+            return None
+        element = self.get_ptr(self.valobj)
+        for _ in range(index):
+            element = self.get_list_element_next(element)
+        return element
 
     def _create_child_at_element_index(self, index):
         if index < 0 or index >= self.num_elements or self.valobj.IsValid() == False:
             return None
         
         element: SBValue
-        if self.no_cache or index >= self.cache_max:
+        if self.no_cache or index >= self.cache_fetch_max:
             element = self._get_uncached_element_at_index(index)
         else:
             if (index >= len(self.cached_elements)):
-                self._cache_elements(self.cache_max)
+                self._cache_elements(len(self.cached_elements) + self.cache_fetch_max)
             element: SBValue = self.cached_elements[index]
         return self._create_synthetic_child(element, index)
+    
 
-class HashMap_SyntheticProvider(_ListLike_SyntheticProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return SummaryProviderTemplate(valobj, internal_dict, __class__)
+class List_SyntheticProvider(_LinkedListLike_SyntheticProvider):
+    def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
+        super().__init__(valobj, internal_dict, is_summary)
 
+    # overrides _VectorLike_SyntheticProvider
+    def get_len(self, obj: SBValue):
+        if not obj.IsValid():
+            return 0
+        _data: SBValue = obj.GetChildMemberWithName("_data")
+        if not is_valid_pointer(_data):
+            return 0
+        size_cache: SBValue = _data.GetChildMemberWithName('size_cache')
+        if not size_cache.IsValid():
+            return 0
+        return size_cache.GetValueAsUnsigned()
+    def get_ptr(self, obj: SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("_data").GetChildMemberWithName("first")
+    def get_tail(self, obj: SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("_data").GetChildMemberWithName("last")
+    def get_list_element_next(self, element: SBValue) -> SBValue:      
+        return element.GetChildMemberWithName("next_ptr")
+    def get_list_element_prev(self, element: SBValue) -> SBValue:
+        return element.GetChildMemberWithName("prev_ptr")
+    def get_list_element_value(self, element: SBValue) -> SBValue:
+        return element.GetChildMemberWithName("value")
+
+    def _create_synthetic_child(self, element: SBValue, index):
+        value: SBValue = element.GetChildMemberWithName("value")
+        offset = get_offset_of_object_member(element, "value")
+        if offset < 0:
+            return None
+        return element.CreateChildAtOffset('[{0}]'.format(str(index)), offset, value.GetType())
+
+class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
         super().__init__(valobj, internal_dict, is_summary)
     
     def update(self):
-        self.num_elements = self._get_size()
-        if self.no_cache or self.num_elements == 0:
-            return
+        self.num_elements = self.get_len(self.valobj)
+        if not self.check_valid(self.valobj):
+            self.num_elements = 0
         self.cached_elements.clear()
         self.cached_key_to_idx_map = dict[str, int]()
         self.cached_idx_to_key_map = dict[int, str]()
-        self.key_template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0)
         self.key_val_element_style: bool = False
+        if self.num_elements == 0:
+            return
+        self.key_template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0)
         if HASH_MAP_KEY_VAL_LIST_STYLE and (is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type)):
             self.key_val_element_style = True
-        self._cache_elements(self.cache_min)
+        if not self.no_cache:
+            self._cache_elements(self.cache_min)
 
-    def _get_size(self):
-        size = self.valobj.GetChildMemberWithName("num_elements").GetValueAsUnsigned()
-        if size > 0:
-            # check if head_element is valid
-            head_element: SBValue = self.valobj.GetChildMemberWithName("head_element")
-            if not is_valid_pointer(head_element):
-                return 0
-            # check if head_element->prev() is nullptr (it should be if the size is > 0)
-            prev: SBValue = head_element.GetChildMemberWithName("prev")
-            if not pointer_exists_and_is_null(prev):
-                return 0
-            # check if tail_element is valid
-            tail_element: SBValue = self.valobj.GetChildMemberWithName("tail_element")
-            if not is_valid_pointer(tail_element):
-                return 0
-            # check if tail_element->next() is nullptr (it should be if the size is > 0)
-            next: SBValue = tail_element.GetChildMemberWithName("next")
-            if not pointer_exists_and_is_null(next):
-                return 0
-            if size >= 2:
-                # check if head_element->next() is valid
-                next: SBValue = head_element.GetChildMemberWithName("next")
-                if not is_valid_pointer(next):
-                    return 0
-                # check if tail_element->prev() is valid
-                prev: SBValue = tail_element.GetChildMemberWithName("prev")
-                if not is_valid_pointer(prev):
-                    return 0
-        return size
-    def get_child_index(self, name: str):
+    def get_len(self, obj: SBValue):
+        return obj.GetChildMemberWithName("num_elements").GetValueAsUnsigned()
+    def get_ptr(self, obj:SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("head_element")
+    def get_tail(self, obj: SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("tail_element")
+    def get_list_element_next(self, element: SBValue) -> SBValue:
+        return element.GetChildMemberWithName("next")
+    def get_list_element_prev(self, element: SBValue) -> SBValue:
+        return element.GetChildMemberWithName("prev")
+    def get_list_element_value(self, element: SBValue) -> SBValue:
+        return element.GetChildMemberWithName("data")
+    def get_index_of_child(self, name: str):
         if self.key_val_element_style:
-            idx = self.cached_key_to_idx_map[(name.lstrip("[").rstrip("]"))]
-            if idx is not None:
-                return idx
-            while len(self.cached_elements) < self.num_elements:
-                new_length = len(self.cached_elements) + self.cache_max
-                if new_length > self.num_elements:
-                    new_length = self.num_elements
-                self._cache_elements(new_length)
-                idx = self.cached_key_to_idx_map[(name.lstrip("[").rstrip("]"))]
-                if idx is not None:
-                    return idx
-            return None
+            return self.get_index_of_key(name.lstrip("[").rstrip("]"))
         else:
             return int(name.lstrip("[").rstrip("]"))
+
+    def get_index_of_key(self, key: str):
+        idx = self.cached_key_to_idx_map[key]
+        if idx is not None:
+            return idx
+        while len(self.cached_elements) < self.num_elements:
+            new_length = len(self.cached_elements) + self.cache_fetch_max
+            if new_length > self.num_elements:
+                new_length = self.num_elements
+            self._cache_elements(new_length)
+            idx = self.cached_key_to_idx_map[key]
+            if idx is not None:
+                return idx
+        return None
 
     def _get_child_summary(self, index):
         if index < 0 or index >= self.num_elements or not self.valobj or self.valobj.IsValid() == False:
@@ -1463,7 +1643,7 @@ class HashMap_SyntheticProvider(_ListLike_SyntheticProvider):
         if not self.cached_elements:
             self.cached_elements = list[SBValue]()
         if len(self.cached_elements) == 0:
-            element: SBValue = self.valobj.GetChildMemberWithName("head_element")
+            element: SBValue = self.get_ptr(self.valobj)
             self.cached_elements.append(element)
         else:
             start = len(self.cached_elements) - 1
@@ -1471,17 +1651,17 @@ class HashMap_SyntheticProvider(_ListLike_SyntheticProvider):
                 return
             element: SBValue = self.cached_elements[start]
         if self.key_val_element_style:
-            key = element.GetChildMemberWithName("data").GetChildMemberWithName("key")
+            key = self.get_list_element_value(element).GetChildMemberWithName("key")
             keySummary = GenericShortSummary(key, self.internal_dict, 0, False, False)
             self.cached_key_to_idx_map[keySummary] = start
             self.cached_idx_to_key_map[start] = keySummary
         for _ in range(start + 1, size):
-            element = element.GetChildMemberWithName("next")
+            element = self.get_list_element_next(element)
             if element.GetValueAsUnsigned() == 0:
                 break
             self.cached_elements.append(element)
             if self.key_val_element_style:
-                key = element.GetChildMemberWithName("data").GetChildMemberWithName("key")
+                key = self.get_list_element_value(element).GetChildMemberWithName("key")
                 keySummary = GenericShortSummary(key, self.internal_dict, 0, False, False)
                 self.cached_key_to_idx_map[keySummary] = len(self.cached_elements) - 1
                 self.cached_idx_to_key_map[len(self.cached_elements) - 1] = keySummary
@@ -1492,113 +1672,18 @@ class HashMap_SyntheticProvider(_ListLike_SyntheticProvider):
             if index in self.cached_idx_to_key_map:
                 keyname = self.cached_idx_to_key_map[index]
             else:
-                key = element.GetChildMemberWithName("data").GetChildMemberWithName("key")
+                key = self.get_list_element_value(element).GetChildMemberWithName("key")
                 keyname = GenericShortSummary(key, self.internal_dict, 0, False, False)
         else:
             keyname = str(index)
         value = element.CreateValueFromData("[" + keyname + "]", element.GetData(), element.GetType())
         return value
 
-    def _get_uncached_element_at_index(self, index):
-        # linked list, get head_element
-        element: SBValue = self.valobj.GetChildMemberWithName("head_element")
-        for _ in range(index):
-            element = element.GetChildMemberWithName("next")
-        return element
 
-class List_SyntheticProvider(_ListLike_SyntheticProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return SummaryProviderTemplate(valobj, internal_dict, __class__)
-
-    def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
-        super().__init__(valobj, internal_dict, is_summary)
-
-    # overrides _VectorLike_SyntheticProvider
-    def _get_size(self):
-        if not self.valobj.IsValid():
-            return 0
-        _data: SBValue = self.valobj.GetChildMemberWithName("_data")
-        if not is_valid_pointer(_data):
-            return 0
-        size_cache: SBValue = _data.GetChildMemberWithName('size_cache')
-        if not size_cache.IsValid():
-            return 0
-        size = size_cache.GetValueAsUnsigned()
-
-        size = _data.GetChildMemberWithName('size_cache').GetValueAsUnsigned()
-        if (size > 0):
-            # check if _data.first.prev_ptr is null
-            first: SBValue = _data.GetChildMemberWithName('first')
-            if not is_valid_pointer(first):
-                return 0
-            first_prev: SBValue = first.GetChildMemberWithName('prev_ptr')
-            # first_prev should be a null_ptr
-            if not pointer_exists_and_is_null(first_prev):
-                return 0
-            offs = get_offset_of_object_member(first, "value")
-            if offs < 0:
-                return 0
-            last: SBValue = _data.GetChildMemberWithName('last')
-            if not is_valid_pointer(last):
-                return 0
-            last_next: SBValue = last.GetChildMemberWithName('next_ptr')
-            # last_next should be a null_ptr
-            if not pointer_exists_and_is_null(last_next):
-                return 0
-            offs = get_offset_of_object_member(last, "value")
-            if offs < 0:
-                return 0
-        return size
-    
-    # overrides _ListLike_SyntheticProvider
-
-    def _cache_elements(self, size: int):
-        if self.num_elements == 0 or size == 0:
-            return
-        if size > self.num_elements:
-            size = self.num_elements
-        start = 0
-        element: SBValue
-        if len(self.cached_elements) == 0:
-            _data: SBValue = self.valobj.GetChildMemberWithName("_data")
-            element = _data.GetChildMemberWithName("first")
-            self.cached_elements.append(element)
-        else:
-            start = len(self.cached_elements) - 1
-            if start > size:
-                return
-            element = self.cached_elements[start]
-        for _ in range(start + 1, size):
-            element = element.GetChildMemberWithName("next_ptr")
-            if element.GetValueAsUnsigned() == 0:
-                break
-            self.cached_elements.append(element)
-
-    def _create_synthetic_child(self, element: SBValue, index):
-        value: SBValue = element.GetChildMemberWithName("value")
-        offset = get_offset_of_object_member(element, "value")
-        if offset < 0:
-            return None
-        return element.CreateChildAtOffset('[{0}]'.format(str(index)), offset, value.GetType())
-
-    def _get_uncached_element_at_index(self, index) -> SBValue:
-        if index < 0 or index >= self.num_elements or self.valobj.IsValid() == False:
-            return None
-        _data: SBValue = self.valobj.GetChildMemberWithName("_data")
-        element: SBValue = _data.GetChildMemberWithName("first")
-        if element.GetValueAsUnsigned() == 0:
-            return None
-        for _ in range(index):
-            element = element.GetChildMemberWithName("next_ptr")
-        return element
-
-class _Proxy_SyntheticProvider(SBSyntheticValueProvider):
+class _Proxy_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj, internal_dict, is_summary = False):
-        self.valobj: SBValue = valobj
-        self.internal_dict = internal_dict
-        self.is_summary = is_summary
-        self.synth_proxy: _VectorLike_SyntheticProvider = None
+        super().__init__(valobj, internal_dict, is_summary)
+        self.synth_proxy: _WithChildren_SyntheticProvider = None
         self.update()
         
     def update(self):
@@ -1625,7 +1710,7 @@ class _Proxy_SyntheticProvider(SBSyntheticValueProvider):
             return self.synth_proxy.has_children()
         return False
 
-    def get_child_index(self, name: str):
+    def get_index_of_child(self, name: str):
         if self.synth_proxy:
             return self.synth_proxy.get_child_index(name)
         return None
@@ -1637,10 +1722,6 @@ class _Proxy_SyntheticProvider(SBSyntheticValueProvider):
 
 # just a proxy for Vector_SyntheticProvider
 class Array_SyntheticProvider(_Proxy_SyntheticProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return SummaryProviderTemplate(valobj, internal_dict, __class__)
-
     def update(self):
         self.synth_proxy: Vector_SyntheticProvider = None
         _p: SBValue = self.valobj.GetChildMemberWithName("_p")
@@ -1652,10 +1733,6 @@ class Array_SyntheticProvider(_Proxy_SyntheticProvider):
                 self.synth_proxy = Vector_SyntheticProvider(array.GetNonSyntheticValue(), self.internal_dict, self.is_summary)
 
 class Dictionary_SyntheticProvider(_Proxy_SyntheticProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return SummaryProviderTemplate(valobj, internal_dict, __class__)
-
     def update(self):
         self.synth_proxy: HashMap_SyntheticProvider = None
         try:
@@ -1673,10 +1750,6 @@ class Dictionary_SyntheticProvider(_Proxy_SyntheticProvider):
 
 
 class VSet_SyntheticProvider(_Proxy_SyntheticProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return SummaryProviderTemplate(valobj, internal_dict, __class__)
-
     def update(self):
         self.synth_proxy: Vector_SyntheticProvider = None
         _data: SBValue = self.valobj.GetChildMemberWithName("_data")
@@ -1688,9 +1761,6 @@ class VSet_SyntheticProvider(_Proxy_SyntheticProvider):
 
 
 class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
-    @staticmethod
-    def SummaryProvider(valobj: SBValue, internal_dict):
-        return SummaryProviderTemplate(valobj, internal_dict, __class__)
     def update(self):
         self.synth_proxy: Vector_SyntheticProvider = None
         self.read_pos = 0
@@ -1729,7 +1799,7 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
             return self.synth_proxy.has_children()
         return False
 
-    def get_child_index(self, name: str):
+    def get_index_of_child(self, name: str):
         if self.synth_proxy:
             if name.startswith("[read_pos"):
                 return 0
@@ -1805,22 +1875,22 @@ SUMMARY_PROVIDERS: list[tuple[str, str]] = [
     ["^(::)?NodePath$", "NodePath_SummaryProvider"],
     ["^(::)?RID$", "RID_SummaryProvider"],
     ["^(::)?Callable$", "Callable_SummaryProvider"],
-    ["^(::)?Variant$", "Variant_SummaryProvider"],
+    ["^(::)?Variant$", "Variant_SyntheticProvider.get_synth_summary"],
     ["^(::)?Signal$", "Signal_SummaryProvider"],
     ["^(::)?ObjectID$", "ObjectID_SummaryProvider"],
-    [HASH_MAP_ELEMENT_PATTERN, SYNTHETIC_PROVIDERS[HASH_MAP_ELEMENT_PATTERN] + ".SummaryProvider"],
     [VMAP_PAIR_PATTERN, "VMap_Pair_SummaryProvider"],
-    [DICTIONARY_PATTERN, SYNTHETIC_PROVIDERS[DICTIONARY_PATTERN] + ".SummaryProvider"],
-    [VECTOR_PATTERN, SYNTHETIC_PROVIDERS[VECTOR_PATTERN] + ".SummaryProvider"],
-    [LIST_PATTERN, SYNTHETIC_PROVIDERS[LIST_PATTERN] + ".SummaryProvider"],
-    [HASHSET_PATTERN, SYNTHETIC_PROVIDERS[HASHSET_PATTERN] + ".SummaryProvider"],
-    [ARRAY_PATTERN, SYNTHETIC_PROVIDERS[ARRAY_PATTERN] + ".SummaryProvider"],
-    [TYPEDARRAY_PATTERN, SYNTHETIC_PROVIDERS[TYPEDARRAY_PATTERN] + ".SummaryProvider"],
-    [HASHMAP_PATTERN, SYNTHETIC_PROVIDERS[HASHMAP_PATTERN] + ".SummaryProvider"],
-    [DICTIONARY_PATTERN, SYNTHETIC_PROVIDERS[DICTIONARY_PATTERN] + ".SummaryProvider"],
-    [VMAP_PATTERN, SYNTHETIC_PROVIDERS[VMAP_PATTERN] + ".SummaryProvider"],
-    [VSET_PATTERN, SYNTHETIC_PROVIDERS[VSET_PATTERN] + ".SummaryProvider"],
-    [RINGBUFFER_PATTERN, SYNTHETIC_PROVIDERS[RINGBUFFER_PATTERN] + ".SummaryProvider"],
+    [HASH_MAP_ELEMENT_PATTERN, SYNTHETIC_PROVIDERS[HASH_MAP_ELEMENT_PATTERN] + ".get_synth_summary"],
+    [DICTIONARY_PATTERN, SYNTHETIC_PROVIDERS[DICTIONARY_PATTERN] + ".get_synth_summary"],
+    [VECTOR_PATTERN, SYNTHETIC_PROVIDERS[VECTOR_PATTERN] + ".get_synth_summary"],
+    [LIST_PATTERN, SYNTHETIC_PROVIDERS[LIST_PATTERN] + ".get_synth_summary"],
+    [HASHSET_PATTERN, SYNTHETIC_PROVIDERS[HASHSET_PATTERN] + ".get_synth_summary"],
+    [ARRAY_PATTERN, SYNTHETIC_PROVIDERS[ARRAY_PATTERN] + ".get_synth_summary"],
+    [TYPEDARRAY_PATTERN, SYNTHETIC_PROVIDERS[TYPEDARRAY_PATTERN] + ".get_synth_summary"],
+    [HASHMAP_PATTERN, SYNTHETIC_PROVIDERS[HASHMAP_PATTERN] + ".get_synth_summary"],
+    [DICTIONARY_PATTERN, SYNTHETIC_PROVIDERS[DICTIONARY_PATTERN] + ".get_synth_summary"],
+    [VMAP_PATTERN, SYNTHETIC_PROVIDERS[VMAP_PATTERN] + ".get_synth_summary"],
+    [VSET_PATTERN, SYNTHETIC_PROVIDERS[VSET_PATTERN] + ".get_synth_summary"],
+    [RINGBUFFER_PATTERN, SYNTHETIC_PROVIDERS[RINGBUFFER_PATTERN] + ".get_synth_summary"],
 ]
 SUMMARY_ADD_COMMAND = 'type summary add -x "{0}" -e -F {1}.{2}'
 SYNTHETIC_ADD_COMMAND = 'type synthetic add -x "{0}" -l {1}.{2}'
