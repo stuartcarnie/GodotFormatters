@@ -105,15 +105,35 @@ def Variant_GetValue(valobj: SBValue):
     elif type == VariantType.FLOAT.value:
         return data.GetChildMemberWithName("_float")
     elif type == VariantType.TRANSFORM2D.value:
-        return data.GetChildMemberWithName("_transform2d")
+        _transform2d = data.GetChildMemberWithName("_transform2d")
+        if is_valid_pointer(_transform2d):
+            return _transform2d
+        else:
+           return None
     elif type == VariantType.AABB.value:
-        return data.GetChildMemberWithName("_aabb")
+        _aabb = data.GetChildMemberWithName("_aabb")
+        if is_valid_pointer(_aabb):
+            return _aabb
+        else:
+           return None
     elif type == VariantType.BASIS.value:
-        return data.GetChildMemberWithName("_basis")
+        _basis = data.GetChildMemberWithName("_basis")
+        if is_valid_pointer(_basis):
+            return _basis
+        else:
+           return None
     elif type == VariantType.TRANSFORM3D.value:
-        return data.GetChildMemberWithName("_transform3d")
+        _transform3d = data.GetChildMemberWithName("_transform3d")
+        if is_valid_pointer(_transform3d):
+            return _transform3d
+        else:
+           return None
     elif type == VariantType.PROJECTION.value:
-        return data.GetChildMemberWithName("_projection")
+        _projection = data.GetChildMemberWithName("_projection")
+        if is_valid_pointer(_projection):
+            return _projection
+        else:
+           return None
     elif (type == VariantType.STRING.value):  # For _mem values, we have to cast them to the correct type
         # find the type for "String"
         stringType: SBType = target.FindFirstType("::String")
@@ -195,44 +215,46 @@ def Variant_GetValue(valobj: SBValue):
         arrayType: SBType = target.FindFirstType("::Array")
         array: SBValue = target.CreateValueFromAddress("[array]", mem_addr, arrayType)
         return array
-    elif type == VariantType.PACKED_BYTE_ARRAY.value:
-        packedByteArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<unsigned char>")
-        packedByteArray: SBValue = target.CreateValueFromAddress("packedByteArrayref", packed_array_addr, packedByteArrayType)
-        return packedByteArray.GetChildMemberWithName("array")
-    elif type == VariantType.PACKED_INT32_ARRAY.value:
-        packedInt64ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<int>")
-        packedInt32Array: SBValue = target.CreateValueFromAddress("packedInt32Arrayref", packed_array_addr, packedInt64ArrayType)
-        return packedInt32Array.GetChildMemberWithName("array")
-    elif type == VariantType.PACKED_INT64_ARRAY.value:
-        packedInt64ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<long long>")
-        packedInt64Array: SBValue = target.CreateValueFromAddress("packedInt64Arrayref", packed_array_addr, packedInt64ArrayType)
-        return packedInt64Array.GetChildMemberWithName("array")
-    elif type == VariantType.PACKED_FLOAT32_ARRAY.value:
-        packedFloat32ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<float>")
-        packedFloat32Array: SBValue = target.CreateValueFromAddress("packedFloat32Arrayref", packed_array_addr, packedFloat32ArrayType)
-        return packedFloat32Array.GetChildMemberWithName("array")
-    elif type == VariantType.PACKED_FLOAT64_ARRAY.value:
-        packedFloat64ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<double>")
-        packedFloat64Array: SBValue = target.CreateValueFromAddress("packedFloat64Arrayref", packed_array_addr, packedFloat64ArrayType)
-        return packedFloat64Array.GetChildMemberWithName("array")
-    elif type == VariantType.PACKED_VECTOR2_ARRAY.value:
-        packedVector2ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Vector2>")
-        packedVector2Array: SBValue = target.CreateValueFromAddress("packedVector2Arrayref", packed_array_addr, packedVector2ArrayType)
-        return packedVector2Array.GetChildMemberWithName("array")
-    elif type == VariantType.PACKED_VECTOR3_ARRAY.value:
-        packedVector3ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Vector3>")
-        packedVector3Array: SBValue = target.CreateValueFromAddress("packedVector3Arrayref", packed_array_addr, packedVector3ArrayType)
-        return packedVector3Array.GetChildMemberWithName("array")
-    elif type == VariantType.PACKED_STRING_ARRAY.value:
-        packedStringArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<String>")
-        packedStringArray: SBValue = target.CreateValueFromAddress("packedStringArrayref", packed_array_addr, packedStringArrayType)
-        return packedStringArray.GetChildMemberWithName("array")
-    elif type == VariantType.PACKED_COLOR_ARRAY.value:
-        packedColorArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Color>")
-        packedColorArray: SBValue = target.CreateValueFromAddress("packedColorArrayref", packed_array_addr, packedColorArrayType)
-        return packedColorArray.GetChildMemberWithName("array")
     else:
-        return None
+        if not is_valid_pointer(packed_array):
+            return None
+        if type == VariantType.PACKED_BYTE_ARRAY.value:
+            packedByteArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<unsigned char>")
+            packedByteArray: SBValue = target.CreateValueFromAddress("packedByteArrayref", packed_array_addr, packedByteArrayType)
+            return packedByteArray.GetChildMemberWithName("array")
+        elif type == VariantType.PACKED_INT32_ARRAY.value:
+            packedInt64ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<int>")
+            packedInt32Array: SBValue = target.CreateValueFromAddress("packedInt32Arrayref", packed_array_addr, packedInt64ArrayType)
+            return packedInt32Array.GetChildMemberWithName("array")
+        elif type == VariantType.PACKED_INT64_ARRAY.value:
+            packedInt64ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<long long>")
+            packedInt64Array: SBValue = target.CreateValueFromAddress("packedInt64Arrayref", packed_array_addr, packedInt64ArrayType)
+            return packedInt64Array.GetChildMemberWithName("array")
+        elif type == VariantType.PACKED_FLOAT32_ARRAY.value:
+            packedFloat32ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<float>")
+            packedFloat32Array: SBValue = target.CreateValueFromAddress("packedFloat32Arrayref", packed_array_addr, packedFloat32ArrayType)
+            return packedFloat32Array.GetChildMemberWithName("array")
+        elif type == VariantType.PACKED_FLOAT64_ARRAY.value:
+            packedFloat64ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<double>")
+            packedFloat64Array: SBValue = target.CreateValueFromAddress("packedFloat64Arrayref", packed_array_addr, packedFloat64ArrayType)
+            return packedFloat64Array.GetChildMemberWithName("array")
+        elif type == VariantType.PACKED_VECTOR2_ARRAY.value:
+            packedVector2ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Vector2>")
+            packedVector2Array: SBValue = target.CreateValueFromAddress("packedVector2Arrayref", packed_array_addr, packedVector2ArrayType)
+            return packedVector2Array.GetChildMemberWithName("array")
+        elif type == VariantType.PACKED_VECTOR3_ARRAY.value:
+            packedVector3ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Vector3>")
+            packedVector3Array: SBValue = target.CreateValueFromAddress("packedVector3Arrayref", packed_array_addr, packedVector3ArrayType)
+            return packedVector3Array.GetChildMemberWithName("array")
+        elif type == VariantType.PACKED_STRING_ARRAY.value:
+            packedStringArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<String>")
+            packedStringArray: SBValue = target.CreateValueFromAddress("packedStringArrayref", packed_array_addr, packedStringArrayType)
+            return packedStringArray.GetChildMemberWithName("array")
+        elif type == VariantType.PACKED_COLOR_ARRAY.value:
+            packedColorArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Color>")
+            packedColorArray: SBValue = target.CreateValueFromAddress("packedColorArrayref", packed_array_addr, packedColorArrayType)
+            return packedColorArray.GetChildMemberWithName("array")
+    return None
 
 
 def Variant_SummaryProvider(valobj: SBValue, internal_dict):
@@ -252,7 +274,9 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
     def get_synth_summary(cls, valobj: SBValue, internal_dict) -> str:
         try:
             obj_id = valobj.GetIndexOfChildWithName('$$object-id$$')
-            if not obj_id:
+            if obj_id == None:
+                for item in GodotSynthProvider.synth_by_id.items():
+                    print(item)
                 return "EXCEPTION: No object id"
             if obj_id not in GodotSynthProvider.synth_by_id:
                 return "EXCEPTION: No synth provider for object id " + str(obj_id)
@@ -636,6 +660,10 @@ def String_SummaryProvider(valobj: SBValue, internal_dict):
         _cowdata: SBValue = valobj.GetChildMemberWithName("_cowdata")
         size = _get_cowdata_size(_cowdata)
         if size is None:
+            # check if this is a pointer to a pointer
+            type = valobj.GetType()
+            if type.IsPointerType() and type.GetPointeeType().IsPointerType():
+                return "{...}"
             return INVALID_SUMMARY
         if size == 0:
             return EMPTY_SUMMARY
@@ -1157,18 +1185,8 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
         else:
             return "[{0}]: {1}".format(key, value)
 
-def SummaryProviderTemplate(valobj: SBValue, internal_dict, initalizer_function):
-    try:
-        if valobj.IsSynthetic():
-            return initalizer_function(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
-        else:
-            return initalizer_function(valobj, internal_dict, True).get_summary()
-    except Exception as e:
-        return "EXCEPTION: " + str(e)
-    
-    
 
-class _WithChildren_SyntheticProvider(GodotSynthProvider):
+class _List_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
         super().__init__(valobj, internal_dict, is_summary)
         self.type: SBType = valobj.GetType()
@@ -1265,7 +1283,7 @@ class _WithChildren_SyntheticProvider(GodotSynthProvider):
             return "<ERROR>: " + str(e)
 
 
-class _ArrayLike_SyntheticProvider(_WithChildren_SyntheticProvider):
+class _ArrayLike_SyntheticProvider(_List_SyntheticProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
         self.item_type: SBType
         self.item_size: int
@@ -1293,7 +1311,49 @@ class _ArrayLike_SyntheticProvider(_WithChildren_SyntheticProvider):
             return self.ptr.CreateChildAtOffset(name, index * self.item_size, self.item_type)
         except:
             return None
+
         
+class PagedArray_SyntheticProvider(_List_SyntheticProvider):
+    def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
+        self.item_type: SBType
+        self.item_size: int
+        self.ptr: SBValue
+        super().__init__(valobj, internal_dict, is_summary)
+    def get_ptr(self, obj:SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("page_data")
+    
+    def get_len(self, obj: SBValue):
+        return obj.GetChildMemberWithName("count").GetValueAsUnsigned()
+
+    def update(self):
+        """
+        Updates num_elements and ptr
+        """
+        self.num_elements = self.get_len(self.valobj)
+        self.ptr: SBValue = self.get_ptr(self.valobj)
+        self.item_type: SBType = self.ptr.GetType().GetPointeeType().GetPointeeType() if self.ptr else None
+        self.item_size: int = self.item_type.GetByteSize() if self.item_type else 0
+        self.page_size_shift: int = self.valobj.GetChildMemberWithName("page_size_shift").GetValueAsUnsigned()
+        self.page_size_mask: int = self.valobj.GetChildMemberWithName("page_size_mask").GetValueAsUnsigned()
+        pointer_to_array_type = self.ptr.GetType().GetPointeeType().GetArrayType(self.num_elements).GetPointerType()
+        self.ptr_cast = self.ptr.Cast(pointer_to_array_type)
+
+
+    def _create_child_at_element_index(self, index) -> SBValue:
+        name = "[" + str(index) + "]"
+        return self.create_child_at_real_index(index, name)
+
+    # Helper function for proxy providers.
+    def create_child_at_real_index(self, index, name):
+        if index < 0 or index >= self.num_elements or not self.ptr:
+            return None
+        page_index = index >> self.page_size_shift
+        offset = index & self.page_size_mask
+        page_data: SBValue = self.ptr_cast.GetChildAtIndex(page_index)
+        child = page_data.CreateChildAtOffset(name, offset * self.item_size, self.item_type)
+        return child
+
+
 
 class Vector_SyntheticProvider(_ArrayLike_SyntheticProvider):
     def get_ptr(self, obj:SBValue) -> SBValue:
@@ -1301,6 +1361,13 @@ class Vector_SyntheticProvider(_ArrayLike_SyntheticProvider):
     
     def get_len(self, obj: SBValue):
         return get_cowdata_size(obj.GetChildMemberWithName("_cowdata"))
+
+class LocalVector_SyntheticProvider(_ArrayLike_SyntheticProvider):
+    def get_ptr(self, obj:SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("data")
+    
+    def get_len(self, obj: SBValue):
+        return obj.GetChildMemberWithName("count").GetValueAsUnsigned()
 
 class HashSet_SyntheticProvider(_ArrayLike_SyntheticProvider):
     def get_ptr(self, obj:SBValue) -> SBValue:
@@ -1388,13 +1455,13 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
         return "[{0}]: {1}".format(key, value)
 
     def get_key_by_index(self, index):
+        if index < 0 or index >= self.num_elements:
+            return None
         if self.no_cache:
             child = self.ptr_cast.GetChildAtIndex(index, eDynamicCanRunTarget, True)
             key: SBValue = child.GetChildMemberWithName("key")
             key_summary = GenericShortSummary(key, self.internal_dict)
             return key_summary
-        if index < 0 or index >= self.num_elements:
-            return None
         if index < len(self.cached_key_summaries):
             return self.cached_key_summaries[index]
         # otherwise, start caching
@@ -1405,7 +1472,6 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
             self.cache_elements(new_length)
             if new_length >= index:
                 break
-        # raise Exception("Index length == " + str(len(self.cached_key_summaries)) + " num_elements == " + str(self.num_elements) + " index == " + str(index) + " cached_key_summaries == " + str(self.cached_key_summaries) + " cached_key_to_idx_map == " + str(self.cached_key_to_idx_map))
         return self.cached_key_summaries[index]
 
     def _create_child_at_element_index(self, index) -> SBValue:
@@ -1441,7 +1507,7 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
         else:
             return int(name.lstrip("[").rstrip("]"))
 
-class _LinkedListLike_SyntheticProvider(_WithChildren_SyntheticProvider):
+class _LinkedListLike_SyntheticProvider(_List_SyntheticProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary = False):
         self.cached_elements: list[SBValue] = list[SBValue]()
         super().__init__(valobj, internal_dict, is_summary)
@@ -1683,7 +1749,7 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
 class _Proxy_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj, internal_dict, is_summary = False):
         super().__init__(valobj, internal_dict, is_summary)
-        self.synth_proxy: _WithChildren_SyntheticProvider = None
+        self.synth_proxy: _List_SyntheticProvider = None
         self.update()
         
     def update(self):
@@ -1720,17 +1786,22 @@ class _Proxy_SyntheticProvider(GodotSynthProvider):
             return self.synth_proxy.get_child_at_index(index)
         return None
 
+UINT32_MAX = 4294967295
+
+def get_synth_provider_for_object(cls, valobj: SBValue, internal_dict, is_summary) -> GodotSynthProvider:
+    obj_id = valobj.GetIndexOfChildWithName('$$object-id$$')
+    if obj_id in GodotSynthProvider.synth_by_id:
+        return GodotSynthProvider.synth_by_id[obj_id]
+    return cls(valobj.GetNonSyntheticValue(), internal_dict, is_summary)
+    
+
 # just a proxy for Vector_SyntheticProvider
 class Array_SyntheticProvider(_Proxy_SyntheticProvider):
     def update(self):
         self.synth_proxy: Vector_SyntheticProvider = None
         _p: SBValue = self.valobj.GetChildMemberWithName("_p")
         if is_valid_pointer(_p):
-            array:SBValue = _p.GetChildMemberWithName("array")
-            if not array.IsSynthetic():
-                self.synth_proxy = Vector_SyntheticProvider(array, self.internal_dict, self.is_summary)
-            else:
-                self.synth_proxy = Vector_SyntheticProvider(array.GetNonSyntheticValue(), self.internal_dict, self.is_summary)
+            self.synth_proxy = get_synth_provider_for_object(Vector_SyntheticProvider, _p.GetChildMemberWithName("array"), self.internal_dict, self.is_summary)
 
 class Dictionary_SyntheticProvider(_Proxy_SyntheticProvider):
     def update(self):
@@ -1738,13 +1809,7 @@ class Dictionary_SyntheticProvider(_Proxy_SyntheticProvider):
         try:
             _p: SBValue = self.valobj.GetChildMemberWithName("_p")
             if is_valid_pointer(_p):
-                hash_map: SBValue = _p.GetChildMemberWithName("variant_map")
-                if not hash_map.IsSynthetic():
-                    self.synth_proxy = HashMap_SyntheticProvider(hash_map, self.internal_dict, self.is_summary)
-                else:
-                    self.synth_proxy = HashMap_SyntheticProvider(hash_map.GetNonSyntheticValue(), self.internal_dict, self.is_summary)
-            else:
-                self.synth_proxy = None
+                self.synth_proxy = get_synth_provider_for_object(HashMap_SyntheticProvider, _p.GetChildMemberWithName("variant_map"), self.internal_dict, self.is_summary)
         except Exception as e:
             self.exception = e
 
@@ -1754,11 +1819,7 @@ class VSet_SyntheticProvider(_Proxy_SyntheticProvider):
         self.synth_proxy: Vector_SyntheticProvider = None
         _data: SBValue = self.valobj.GetChildMemberWithName("_data")
         if _data.IsValid():
-            if not _data.IsSynthetic():
-                self.synth_proxy = Vector_SyntheticProvider(_data, self.internal_dict, self.is_summary)
-            else:
-                self.synth_proxy = Vector_SyntheticProvider(_data.GetNonSyntheticValue(), self.internal_dict, self.is_summary)
-
+            self.synth_proxy = get_synth_provider_for_object(Vector_SyntheticProvider, _data, self.internal_dict, self.is_summary)
 
 class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
     def update(self):
@@ -1768,10 +1829,7 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
         self.size_mask = 0
         _data: SBValue = self.valobj.GetChildMemberWithName("data")
         if _data.IsValid():
-            if not _data.IsSynthetic():
-                self.synth_proxy = Vector_SyntheticProvider(_data, self.internal_dict, self.is_summary)
-            else:
-                self.synth_proxy = Vector_SyntheticProvider(_data.GetNonSyntheticValue(), self.internal_dict, self.is_summary)
+            self.synth_proxy = get_synth_provider_for_object(Vector_SyntheticProvider, _data, self.internal_dict, self.is_summary)
             self.size_mask = self.valobj.GetChildMemberWithName("size_mask").GetValueAsSigned()
             self.read_pos = self.valobj.GetChildMemberWithName("read_pos").GetValueAsSigned() & self.size_mask
             self.write_pos = self.valobj.GetChildMemberWithName("write_pos").GetValueAsSigned() & self.size_mask
@@ -1837,6 +1895,10 @@ VMAP_PAIR_PATTERN:str = "^(::)?VMap<.+,.+>::Pair$"
 VSET_PATTERN:str = "^(::)?VSet<.+>$"
 RINGBUFFER_PATTERN:str = "^(::)?RingBuffer<.+>$"
 
+LOCAL_VECTOR_PATTERN:str = "^(::)?LocalVector<.+>$"
+PAGED_ARRAY_PATTERN:str = "^(::)?PagedArray<.+>$"
+
+
 SYNTHETIC_PROVIDERS: dict[str,str] = {
     "^(::)?Variant$":     "Variant_SyntheticProvider",
     HASH_MAP_ELEMENT_PATTERN: "HashMapElement_SyntheticProvider",
@@ -1850,6 +1912,8 @@ SYNTHETIC_PROVIDERS: dict[str,str] = {
     VMAP_PATTERN:         "VMap_SyntheticProvider",
     VSET_PATTERN:         "VSet_SyntheticProvider",
     RINGBUFFER_PATTERN:   "RingBuffer_SyntheticProvider",
+    LOCAL_VECTOR_PATTERN: "LocalVector_SyntheticProvider",
+    PAGED_ARRAY_PATTERN:  "PagedArray_SyntheticProvider",
 }
 
 SUMMARY_PROVIDERS: list[tuple[str, str]] = [
@@ -1875,22 +1939,22 @@ SUMMARY_PROVIDERS: list[tuple[str, str]] = [
     ["^(::)?NodePath$", "NodePath_SummaryProvider"],
     ["^(::)?RID$", "RID_SummaryProvider"],
     ["^(::)?Callable$", "Callable_SummaryProvider"],
-    ["^(::)?Variant$", "Variant_SyntheticProvider.get_synth_summary"],
     ["^(::)?Signal$", "Signal_SummaryProvider"],
     ["^(::)?ObjectID$", "ObjectID_SummaryProvider"],
     [VMAP_PAIR_PATTERN, "VMap_Pair_SummaryProvider"],
-    [HASH_MAP_ELEMENT_PATTERN, SYNTHETIC_PROVIDERS[HASH_MAP_ELEMENT_PATTERN] + ".get_synth_summary"],
-    [DICTIONARY_PATTERN, SYNTHETIC_PROVIDERS[DICTIONARY_PATTERN] + ".get_synth_summary"],
-    [VECTOR_PATTERN, SYNTHETIC_PROVIDERS[VECTOR_PATTERN] + ".get_synth_summary"],
-    [LIST_PATTERN, SYNTHETIC_PROVIDERS[LIST_PATTERN] + ".get_synth_summary"],
-    [HASHSET_PATTERN, SYNTHETIC_PROVIDERS[HASHSET_PATTERN] + ".get_synth_summary"],
-    [ARRAY_PATTERN, SYNTHETIC_PROVIDERS[ARRAY_PATTERN] + ".get_synth_summary"],
-    [TYPEDARRAY_PATTERN, SYNTHETIC_PROVIDERS[TYPEDARRAY_PATTERN] + ".get_synth_summary"],
-    [HASHMAP_PATTERN, SYNTHETIC_PROVIDERS[HASHMAP_PATTERN] + ".get_synth_summary"],
-    [DICTIONARY_PATTERN, SYNTHETIC_PROVIDERS[DICTIONARY_PATTERN] + ".get_synth_summary"],
-    [VMAP_PATTERN, SYNTHETIC_PROVIDERS[VMAP_PATTERN] + ".get_synth_summary"],
-    [VSET_PATTERN, SYNTHETIC_PROVIDERS[VSET_PATTERN] + ".get_synth_summary"],
-    [RINGBUFFER_PATTERN, SYNTHETIC_PROVIDERS[RINGBUFFER_PATTERN] + ".get_synth_summary"],
+    # ["^(::)?Variant$", "Variant_SyntheticProvider.get_synth_summary"],
+    # [HASH_MAP_ELEMENT_PATTERN, SYNTHETIC_PROVIDERS[HASH_MAP_ELEMENT_PATTERN] + ".get_synth_summary"],
+    # [DICTIONARY_PATTERN, SYNTHETIC_PROVIDERS[DICTIONARY_PATTERN] + ".get_synth_summary"],
+    # [VECTOR_PATTERN, SYNTHETIC_PROVIDERS[VECTOR_PATTERN] + ".get_synth_summary"],
+    # [LIST_PATTERN, SYNTHETIC_PROVIDERS[LIST_PATTERN] + ".get_synth_summary"],
+    # [HASHSET_PATTERN, SYNTHETIC_PROVIDERS[HASHSET_PATTERN] + ".get_synth_summary"],
+    # [ARRAY_PATTERN, SYNTHETIC_PROVIDERS[ARRAY_PATTERN] + ".get_synth_summary"],
+    # [TYPEDARRAY_PATTERN, SYNTHETIC_PROVIDERS[TYPEDARRAY_PATTERN] + ".get_synth_summary"],
+    # [HASHMAP_PATTERN, SYNTHETIC_PROVIDERS[HASHMAP_PATTERN] + ".get_synth_summary"],
+    # [DICTIONARY_PATTERN, SYNTHETIC_PROVIDERS[DICTIONARY_PATTERN] + ".get_synth_summary"],
+    # [VMAP_PATTERN, SYNTHETIC_PROVIDERS[VMAP_PATTERN] + ".get_synth_summary"],
+    # [VSET_PATTERN, SYNTHETIC_PROVIDERS[VSET_PATTERN] + ".get_synth_summary"],
+    # [RINGBUFFER_PATTERN, SYNTHETIC_PROVIDERS[RINGBUFFER_PATTERN] + ".get_synth_summary"],
 ]
 SUMMARY_ADD_COMMAND = 'type summary add -x "{0}" -e -F {1}.{2}'
 SYNTHETIC_ADD_COMMAND = 'type synthetic add -x "{0}" -l {1}.{2}'
@@ -1903,6 +1967,7 @@ def __lldb_init_module(debugger : SBDebugger, dict):
     for summary in SUMMARY_PROVIDERS:
         debugger.HandleCommand(SUMMARY_ADD_COMMAND.format(summary[0], __name__, summary[1]))
     for key in SYNTHETIC_PROVIDERS:
+        debugger.HandleCommand(SUMMARY_ADD_COMMAND.format(key, __name__, SYNTHETIC_PROVIDERS[key] + ".get_synth_summary"))
         debugger.HandleCommand(SYNTHETIC_ADD_COMMAND.format(key, __name__, SYNTHETIC_PROVIDERS[key]))
 
 
