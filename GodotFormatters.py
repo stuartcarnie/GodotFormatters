@@ -1206,7 +1206,7 @@ class RBMapElement_SyntheticProvider(HashMapElement_SyntheticProvider):
         return self.valobj.GetChildMemberWithName("_data")
 
 
-class _List_SyntheticProvider(GodotSynthProvider):
+class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         super().__init__(valobj, internal_dict, is_summary)
         self.type: SBType = valobj.GetType()
@@ -1304,7 +1304,7 @@ class _List_SyntheticProvider(GodotSynthProvider):
             return "<ERROR>: " + str(e)
 
 
-class PagedArray_SyntheticProvider(_List_SyntheticProvider):
+class PagedArray_SyntheticProvider(_ListOfChildren_SyntheticProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         self.item_type: SBType
         self.item_size: int
@@ -1386,7 +1386,7 @@ class PagedArray_SyntheticProvider(_List_SyntheticProvider):
         return child
 
 
-class _ArrayLike_SyntheticProvider(_List_SyntheticProvider):
+class _ArrayLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         self.item_type: SBType
         self.item_size: int
@@ -1599,7 +1599,7 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
             return int(name.lstrip("[").rstrip("]"))
 
 
-class _LinkedListLike_SyntheticProvider(_List_SyntheticProvider):
+class _LinkedListLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         self.cached_elements: list[SBValue] = list[SBValue]()
         super().__init__(valobj, internal_dict, is_summary)
@@ -1909,7 +1909,7 @@ class RBMap_SyntheticProvider(HashMap_SyntheticProvider):
 class _Proxy_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj, internal_dict, is_summary=False):
         super().__init__(valobj, internal_dict, is_summary)
-        self.synth_proxy: _List_SyntheticProvider = None
+        self.synth_proxy: _ListOfChildren_SyntheticProvider = None
         self.update()
 
     def update(self):
