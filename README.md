@@ -1,6 +1,6 @@
 # README #
 
-I use LLDB to debug the Godot engine, and got tired with there being no visualisation for all the built-in types. Here I endeavour to make all of these types visible through the debugger.
+I use LLDB to debug the Godot engine, and got tired with there being no visualization for all the built-in types. Here I endeavor to make all of these types visible through the debugger.
 
 # Installation #
 
