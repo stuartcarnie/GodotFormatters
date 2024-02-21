@@ -66,6 +66,8 @@ import weakref
 import logging
 
 log = logging.getLogger(__name__)
+UINT32_MAX = 4294967295
+INT32_MAX = 2147483647
 
 # Summary string config
 NULL_SUMMARY = "<null>"
@@ -76,9 +78,9 @@ SUMM_STR_MAX_LEN = 100
 MAX_DEPTH = 5
 MAX_CHILDREN_IN_SUMMARY = 6
 HASH_MAP_KEY_VAL_LIST_STYLE = True  # if true, will display children in HashMaps in a key-value list style (e.g. ["key"] = "value"); if false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")
-UINT32_MAX = 4294967295
 PRINT_VERBOSE = False
 PRINT_TRACE = False
+STRINGS_STILL_32_BIT = True  # if true, strings are still 32-bit
 
 # Synthetic list-like configs; because linked-lists need to traverse the list to get a specific element, we need to cache the members to be performant.
 NO_CACHE_MEMBERS = False
@@ -734,6 +736,10 @@ def String_SummaryProvider(valobj: SBValue, internal_dict):
             return INVALID_SUMMARY
         if size == 0:
             return EMPTY_SUMMARY
+        if (
+            STRINGS_STILL_32_BIT and size > INT32_MAX
+        ):  # while cowdata has been promoted to 64-bits, this is still the limit for strings
+            return INVALID_SUMMARY
         _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
         _ptr.format = eFormatUnicode32
         data = _ptr.GetPointeeData(0, size)
@@ -747,7 +753,7 @@ def String_SummaryProvider(valobj: SBValue, internal_dict):
             starr = starr[:-1]
         return '"{0}"'.format(starr)
     except Exception as e:
-        return "<String> EXCEPTION: " + str(e)
+        return "<String: EXCEPTION: " + str(e) + ">" + str(size)
 
 
 def is_basic_printable_type(type: SBType):
