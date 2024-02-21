@@ -338,13 +338,6 @@ def Variant_GetValue(valobj: SBValue):
     return None
 
 
-def Variant_SummaryProvider(valobj: SBValue, internal_dict):
-    if valobj.IsSynthetic():
-        return Variant_SyntheticProvider(valobj.GetNonSyntheticValue(), internal_dict).get_summary()
-    else:
-        return Variant_SyntheticProvider(valobj, internal_dict).get_summary()
-
-
 class _SBSyntheticValueProviderWithSummary(SBSyntheticValueProvider):
     def get_summary(self) -> str:
         raise Exception("Not implemented")
