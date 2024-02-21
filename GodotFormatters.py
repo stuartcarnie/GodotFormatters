@@ -366,8 +366,8 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
             if obj_id not in GodotSynthProvider.synth_by_id:
                 return "<EXCEPTION>: No synth provider for object id " + str(obj_id)
             synth_provider = GodotSynthProvider.synth_by_id[obj_id]
-            if not synth_provider:
-                return "<EXCEPTION>: No synth provider for object id " + str(obj_id)
+            if synth_provider is None:  # type: ignore
+                return "<EXCEPTION>: No synth provider for object id " + str(obj_id)  # type: ignore
                 # if valobj.IsSynthetic():
                 #     return INVALID_SUMMARY
                 # else:
@@ -816,9 +816,10 @@ def is_basic_string_type(type: SBType):
 def is_string_type(type: SBType):
     type_class = type.GetTypeClass()
     if type_class == eTypeClassClass or type_class == eTypeClassPointer:
+        _class_type = type
         if type_class == eTypeClassPointer:
-            _type = type.GetPointeeType()
-        type_name: str = _type.GetUnqualifiedType().GetDisplayTypeName()
+            _class_type = type.GetPointeeType()
+        type_name: str = _class_type.GetUnqualifiedType().GetDisplayTypeName()
         if type_name == "String":
             return True
         elif type_name == "StringName":
@@ -1597,7 +1598,7 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
             key_summary = GenericShortSummary(key, self.internal_dict)
             return key_summary
         if index < len(self.cached_key_summaries):
-            return str(self.cached_key_summaries[index])
+            return self.cached_key_summaries[index]
         # otherwise, start caching
         while len(self.cached_key_summaries) < self.num_elements:
             new_length = len(self.cached_key_summaries) + self.cache_fetch_max
@@ -1606,7 +1607,7 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
             self.cache_elements(new_length)
             if new_length >= index:
                 break
-        return str(self.cached_key_summaries[index])
+        return self.cached_key_summaries[index]
 
     def _create_child_at_element_index(self, index) -> SBValue:
         key = self.get_key_by_index(index) if self.key_val_element_style else str(index)
@@ -1840,15 +1841,17 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
             return int(name.lstrip("[").rstrip("]"))
 
     def get_index_of_key(self, key: str):
-        if key in self.cached_key_to_idx_map:
-            return self.cached_key_to_idx_map[key]
-        while len(self.cached_elements) < self.num_elements:
+        idx = self.cached_key_to_idx_map[key]
+        if idx is not None:  # type: ignore
+            return idx  # type: ignore
+        while len(self.cached_elements) < self.num_elements:  # type: ignore
             new_length = len(self.cached_elements) + self.cache_fetch_max
             if new_length > self.num_elements:
                 new_length = self.num_elements
             self._cache_elements(new_length)
-            if key in self.cached_key_to_idx_map:
-                return self.cached_key_to_idx_map[key]
+            idx = self.cached_key_to_idx_map[key]
+            if idx is not None:  # type: ignore
+                return idx
         return None
 
     def _get_child_summary(self, index):
