@@ -43,6 +43,10 @@ It's also possible to use it with the official Microsoft C++ extension debugger 
         {
             "text": "command script import ~/GodotFormatters/lldb_godot_formatters.py",
             "description": "Godot Visualizers"
+        },
+        {
+            "text": "godot-formatter set-opts --midebugger-compat=True",
+            "description": "Set MIDebugger compatibility"
         }
     ],
     "cwd": "${workspaceFolder}"
