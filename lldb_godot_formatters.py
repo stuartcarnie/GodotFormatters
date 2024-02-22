@@ -10,13 +10,13 @@ from types import TracebackType
 from typing import final, Optional
 
 # fmt: off
-from lldb import ( SBTypeNameSpecifier, eFormatBytes, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
+from lldb import (eFormatBytes, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
                   eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, 
                   eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, 
                   eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, 
                   eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, 
                   eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer, eTypeOptionCascade)
-from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger, SBTypeSummary, SBTypeSynthetic)
+from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger, SBTypeSummary, SBTypeSynthetic, SBTypeNameSpecifier)
 # fmt: on
 from enum import Enum
 import weakref
@@ -123,7 +123,7 @@ def print_trace(val: str):
 #     if not SANITIZE_STRING_SUMMARY:
 #         return string
 #     prefix = ""
-#     suffix = "" 
+#     suffix = ""
 #     if string.startswith("U\""):
 #         prefix = "U\""
 #         string = string.removeprefix("U\"")
@@ -1157,7 +1157,6 @@ def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
     return size
 
 
-
 def is_cowdata_valid(_cowdata: SBValue) -> bool:
     size = _get_cowdata_size(_cowdata)
     if size is None:
@@ -1439,7 +1438,6 @@ class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
         if not self.check_valid(self.valobj):
             return INVALID_SUMMARY
         return LIST_FORMAT.format(type_name = self.typename, type_name_without_template_args = self.typename.split('<')[0], size=self.num_elements, children=self.get_children_summary())
-        
 
 
 class PagedArray_SyntheticProvider(_ListOfChildren_SyntheticProvider):
@@ -2058,7 +2056,15 @@ class _Proxy_SyntheticProvider(GodotSynthProvider):
 
     def get_summary(self):
         if self.synth_proxy:
-            return self.synth_proxy.get_summary()
+            size = self.synth_proxy.num_elements
+            children_summary = self.synth_proxy.get_children_summary()
+            type_name = self.valobj.GetType().GetUnqualifiedType().GetDisplayTypeName()
+            return LIST_FORMAT.format(
+                type_name=type_name,
+                type_name_without_template_args=type_name.split("<")[0],
+                size=size,
+                children=children_summary,
+            )
         return INVALID_SUMMARY
 
     def num_children(self):
@@ -2144,13 +2150,20 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
     def get_summary(self):
         if not self.check_valid(self.valobj):
             return INVALID_SUMMARY
+        children_summary = ""
+        size = 0
         if self.synth_proxy and self.synth_proxy.num_elements > 0:
+            size = self.synth_proxy.num_elements
             read_pos_summary = "<read_pos:{0}>".format(self.read_pos)
             write_pos_summary = "<write_pos:{0}>".format(self.write_pos)
-            size_summary = "<size:{0}>".format(self.synth_proxy.num_elements)
-            children_summary = self.synth_proxy.get_children_summary()
-            return f"{{{read_pos_summary} {write_pos_summary} {size_summary} {children_summary}}}"
-        return LIST_FORMAT.format(type_name='RingBuffer', type_name_without_template_args='RingBuffer', size = 0, children = '')
+            proxy_children_sum = self.synth_proxy.get_children_summary()
+            children_summary = f"{read_pos_summary} {write_pos_summary} {proxy_children_sum}"
+        return LIST_FORMAT.format(
+            type_name=self.valobj.GetType().GetUnqualifiedType().GetDisplayTypeName(),
+            type_name_without_template_args="RingBuffer",
+            size=size,
+            children=children_summary,
+        )
 
     def num_children(self):
         if self.synth_proxy:
@@ -2184,8 +2197,6 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
                 return self.synth_proxy.create_child_at_real_index(pos_val, synth_name)
             return self.synth_proxy.get_child_at_index(index - 2)
         return None
-
-
 
 
 # turn off black-formatter
