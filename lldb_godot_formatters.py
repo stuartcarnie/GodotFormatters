@@ -64,8 +64,8 @@ Opts: GodotFormatterOptions = GodotFormatterOptions()
 # Summary string formats
 NULL_SUMMARY = "<null>"
 NIL_SUMMARY = "<nil>"  # Variant nil
-EMPTY_SUMMARY = "<empty>" # Empty string, nodepath, etc.
-INVALID_SUMMARY = "<invalid>" # Invalid pointer, uninitialized objects, etc.
+EMPTY_SUMMARY = "<empty>"  # Empty string, nodepath, etc.
+INVALID_SUMMARY = "<invalid>"  # Invalid pointer, uninitialized objects, etc.
 LIST_FORMAT = "{type_no_template}[{size}]{{{children}}}"
 
 # Synthetic list-like configs; because linked-lists need to traverse the list to get a specific element, we need to cache the members to be performant.
@@ -78,6 +78,7 @@ MAX_DEPTH = 3
 
 
 # Compatibility settings
+
 
 class VariantType(Enum):
     NIL = 0
@@ -129,6 +130,7 @@ def print_verbose(val: str):
 def print_trace(val: str):
     if Opts.PRINT_TRACE:
         print(val)
+
 
 def GetFloat(valobj: SBValue) -> float:
     dataArg: SBData = valobj.GetData()
@@ -339,14 +341,18 @@ def Variant_GetValue(valobj: SBValue):
 class _SBSyntheticValueProviderWithSummary(SBSyntheticValueProvider):
     def get_summary(self) -> str:
         raise Exception("Not implemented")
+
     def check_valid(self, obj: SBValue) -> bool:
         raise Exception("Not implemented")
 
+
 import json
+
 
 class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
     synth_by_id: weakref.WeakValueDictionary[int, _SBSyntheticValueProviderWithSummary] = weakref.WeakValueDictionary()
     next_id = 0
+
     @classmethod
     def get_synth_summary(cls, valobj: SBValue, internal_dict) -> str:
         obj_id = valobj.GetIndexOfChildWithName("$$object-id$$")
@@ -416,7 +422,7 @@ class Variant_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         super().__init__(valobj, internal_dict, is_summary)
         self.update()
-    
+
     def check_valid(self, obj: SBValue) -> bool:
         variant_type = obj.GetChildMemberWithName("type").GetValueAsUnsigned()
         data = Variant_GetValue(obj)
@@ -647,16 +653,17 @@ def Rect2i_SummaryProvider(valobj: SBValue, internal_dict):
         valobj.GetChildMemberWithName("size").GetChildMemberWithName("y").GetValueAsSigned(),
     )
 
+
 def ValCheck(val: SBValue) -> SBValue:
     if not val:
         raise Exception("SBValue is None")
     error = val.GetError()
     if error.Fail() or not val.IsValid():
-        fmt_err = f'{val.GetName()}: ' if val.GetName() else ''
+        fmt_err = f"{val.GetName()}: " if val.GetName() else ""
         if error.Fail():
             raise Exception(fmt_err + error.GetCString())
         else:
-            raise Exception(fmt_err + 'SBValue is not valid')
+            raise Exception(fmt_err + "SBValue is not valid")
     return val
 
 
@@ -667,7 +674,7 @@ def ConstructNamedColorTable(global_named_colors_table: SBValue) -> dict[str, st
             named_color = ValCheck(global_named_colors_table.GetChildAtIndex(i))
             name_val = ValCheck(named_color.GetChildMemberWithName("name"))
             name_val_summary = name_val.GetSummary()
-            if not name_val_summary: # nullptr at the end of the array
+            if not name_val_summary:  # nullptr at the end of the array
                 break
             name = strip_quotes(name_val_summary)
             color = ValCheck(named_color.GetChildMemberWithName("color"))
@@ -678,35 +685,40 @@ def ConstructNamedColorTable(global_named_colors_table: SBValue) -> dict[str, st
         return dict[str, str]()
     return table
 
+
 constructed_the_table = False
 hex_color_to_name: dict[str, str] = {}
+
 
 def TryConstructNamedColorTable(target: SBTarget) -> None:
     global constructed_the_table
     if not constructed_the_table:
         global hex_color_to_name
-        named_colors =  target.FindFirstGlobalVariable("named_colors")
+        named_colors = target.FindFirstGlobalVariable("named_colors")
         if not named_colors or not named_colors.IsValid() or named_colors.GetNumChildren() == 0:
-            return # return without setting constructed_the_table; we might not be in the right context to do this
+            return  # return without setting constructed_the_table; we might not be in the right context to do this
         hex_color_to_name = ConstructNamedColorTable(named_colors)
         constructed_the_table = True
         # print_trace(str(hex_color_to_name))
 
 
-def GetColorAlias(valobj: SBValue, vals: tuple[float,float,float,float] = None) -> str:
+def GetColorAlias(valobj: SBValue, vals: tuple[float, float, float, float] = None) -> str:
     r, g, b, a = vals if vals else GetColorVals(valobj)
-    hex_str = GetHexColor(r,g,b,a)
+    hex_str = GetHexColor(r, g, b, a)
     TryConstructNamedColorTable(valobj.target)
     if hex_str in hex_color_to_name:
         hex_str = hex_color_to_name[hex_str]
     return hex_str
 
-def GetHexColor(r,g,b,a) -> str:
+
+def GetHexColor(r, g, b, a) -> str:
     def _get_hex(val: float):
         new_val = max(min(round(val * 255), 255), 0)
         return "{:02x}".format(new_val)
+
     r_hex, g_hex, b_hex, a_hex = _get_hex(r), _get_hex(g), _get_hex(b), _get_hex(a)
     return "#{0}{1}{2}{3}".format(r_hex, g_hex, b_hex, a_hex)
+
 
 def GetColorVals(valobj: SBValue):
     return (
@@ -716,10 +728,11 @@ def GetColorVals(valobj: SBValue):
         GetFloat(valobj.GetChildMemberWithName("a")),
     )
 
+
 def Color_SummaryProvider(valobj: SBValue, internal_dict):
     r, g, b, a = GetColorVals(valobj)
     if not Opts.NAMED_COLOR_ANNOTATION:
-        hex_str = GetHexColor(r,g,b,a)
+        hex_str = GetHexColor(r, g, b, a)
     else:
         hex_str = GetColorAlias(valobj, (r, g, b, a))
     return "{{<{0}> r:{1:.3f}, g:{2:.3f}, b:{3:.3f}, a:{4:.3f}}}".format(hex_str, r, g, b, a)
@@ -791,7 +804,7 @@ def String_SummaryProvider(valobj: SBValue, internal_dict):
         return EMPTY_SUMMARY
 
     # While cowdata has been promoted to 64-bits, this is still the limit for strings
-    if ( STRINGS_STILL_32_BIT and size > INT32_MAX ): 
+    if STRINGS_STILL_32_BIT and size > INT32_MAX:
         return INVALID_SUMMARY
     _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
     _ptr.format = eFormatUnicode32
@@ -800,8 +813,8 @@ def String_SummaryProvider(valobj: SBValue, internal_dict):
         if ret is None:
             print_trace("String_SummaryProvider: _ptr.GetSummary() returned None")
             return EMPTY_SUMMARY
-        if ret.startswith("U\""):
-            ret = '"' + ret.removeprefix("U\"")
+        if ret.startswith('U"'):
+            ret = '"' + ret.removeprefix('U"')
         return ret
     data = _ptr.GetPointeeData(0, size)
     error: SBError = SBError()
@@ -813,6 +826,7 @@ def String_SummaryProvider(valobj: SBValue, internal_dict):
     if starr.endswith("\x00"):
         starr = starr[:-1]
     return '"{0}"'.format(starr)
+
 
 def is_basic_printable_type(type: SBType):
     if type.GetTypeClass() == eTypeClassEnumeration:
@@ -1087,14 +1101,17 @@ def pointer_exists_and_is_null(ptr: SBValue) -> bool:
 
 
 # Cowdata size is located at the cowdata address - 8 bytes (sizeof(uint64_t))
-def get_exception_trace(e: Exception, before_exception_limit=5, _this_call_depth = 2) -> str:
-    stack_prefix = 'Traceback (most recent call last):\n'
+def get_exception_trace(e: Exception, before_exception_limit=5, _this_call_depth=2) -> str:
+    stack_prefix = "Traceback (most recent call last):\n"
     exception_trace = traceback.format_exception(type(e), e, e.__traceback__)
-    stack_trace_str = ''.join(exception_trace[1:]).replace('\\n', '\n')
+    stack_trace_str = "".join(exception_trace[1:]).replace("\\n", "\n")
     if before_exception_limit > 0:
         before_exc_stack_trace = traceback.format_stack(limit=(before_exception_limit + 2))
-        stack_trace_str = ''.join(before_exc_stack_trace[:-_this_call_depth]).replace('\\n', '\n') + "Handled:\n" + stack_trace_str
+        stack_trace_str = (
+            "".join(before_exc_stack_trace[:-_this_call_depth]).replace("\\n", "\n") + "Handled:\n" + stack_trace_str
+        )
     return stack_prefix + stack_trace_str
+
 
 def print_exception_trace(e: Exception, before_exception_limit=5) -> None:
     print(get_exception_trace(e, before_exception_limit, 3))
@@ -1106,7 +1123,7 @@ def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
     if not _cowdata or not _cowdata.IsValid():
         print_trace("COWDATASIZE Invalid: _cowdata is not valid")
         stack_fmt = traceback.format_stack()
-        print_trace(''.join(stack_fmt[:-1]).replace('\\n', '\n'))
+        print_trace("".join(stack_fmt[:-1]).replace("\\n", "\n"))
         return None
     try:
         _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
@@ -1394,7 +1411,7 @@ class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
 
     def get_children_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY) -> str:
         if self.num_elements == 0:
-            return ''
+            return ""
         max_children = min(Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, self.num_elements)
         i: int = 0
         summ_str = ""
@@ -2195,7 +2212,6 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
         return None
 
 
-# turn off black-formatter
 # fmt: off
 
 HASHSET_PATTERN:str = "^(::)?HashSet<.+(,[^,]+)?(,[^,]+)?>$"
@@ -2262,21 +2278,31 @@ SUMMARY_PROVIDERS: dict[str,object] = {
     "^(::)?ObjectID$":      ObjectID_SummaryProvider,
     VMAP_PAIR_PATTERN:      VMap_Pair_SummaryProvider,
 }
+# fmt: on
 
 module = sys.modules[__name__]
 cpp_category = None
+
+
 def attach_synthetic_to_type(type_name, synth_class: type, is_regex=True):
     global module, cpp_category
     # print_trace('attaching synthetic %s to "%s", is_regex=%s' %(synth_class.__name__, type_name, is_regex))
-    synth = SBTypeSynthetic.CreateWithClassName(__name__ + '.' + synth_class.__name__)
+    synth = SBTypeSynthetic.CreateWithClassName(__name__ + "." + synth_class.__name__)
     synth.SetOptions(eTypeOptionCascade)
     cpp_category.AddTypeSynthetic(SBTypeNameSpecifier(type_name, is_regex), synth)
-    attach_summary_to_type(type_name, synth_class.get_synth_summary, is_regex, real_fn_name=(str(synth_class.__name__) + ".get_synth_summary"))
+    attach_summary_to_type(
+        type_name,
+        synth_class.get_synth_summary,
+        is_regex,
+        real_fn_name=(str(synth_class.__name__) + ".get_synth_summary"),
+    )
 
-def attach_summary_to_type(type_name, real_summary_fn, is_regex=False, real_fn_name: str =None):
+
+def attach_summary_to_type(type_name, real_summary_fn, is_regex=False, real_fn_name: str = None):
     global module, cpp_category
     if not real_fn_name:
         real_fn_name = str(real_summary_fn.__qualname__)
+
     def __spfunc(valobj, dict):
         try:
             return real_summary_fn(valobj, dict)
@@ -2284,15 +2310,17 @@ def attach_summary_to_type(type_name, real_summary_fn, is_regex=False, real_fn_n
             err_msg = "ERROR in " + real_fn_name + ": " + str(e)
             print_verbose(err_msg)
             print_verbose(get_exception_trace(e))
-            return f'<{err_msg}>'
+            return f"<{err_msg}>"
+
     # LLDB accesses summary fn's by name, so we need to create a unique one.
-    __spfunc.__name__ = '__' + real_fn_name.replace('.', '_')
+    __spfunc.__name__ = "__" + real_fn_name.replace(".", "_")
     setattr(module, __spfunc.__name__, __spfunc)
 
     # print_trace(f'attaching summary {__spfunc.__name__} with real function {real_summary_fn.__qualname__} to {type_name}, is_regex={is_regex}')
-    summary = SBTypeSummary.CreateWithFunctionName(__name__ + '.' + __spfunc.__name__)
+    summary = SBTypeSummary.CreateWithFunctionName(__name__ + "." + __spfunc.__name__)
     summary.SetOptions(eTypeOptionCascade)
     cpp_category.AddTypeSummary(SBTypeNameSpecifier(type_name, is_regex), summary)
+
 
 # TODO: Collate globals better
 def clear_globals():
@@ -2301,6 +2329,7 @@ def clear_globals():
     hex_color_to_name.clear()
     global constructed_the_table
     constructed_the_table = False
+
 
 def register_all_synth_and_summary_providers():
     force_compat(Opts.MIDEBUGGER_COMPAT)
@@ -2317,7 +2346,6 @@ def register_all_synth_and_summary_providers():
             print_verbose("EXCEPTION st: " + str(e))
 
 
-# fmt: on
 def monkey_patch_optparse():
     if not "bool" in optparse.Option.TYPES:
         optparse.Option.TYPES = optparse.Option.TYPES + ("bool",)
