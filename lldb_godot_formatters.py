@@ -3,20 +3,20 @@
 # Add the following lines to your ~/.lldbinit, or run this line directly in the debug console:
 # `command script import <PATH_TO_SCRIPT>/lldb_godot_formatters.py`
 
-# import typing  # type: ignore
-# if typing.TYPE_CHECKING:  # type: ignore
-#     from typings import lldb # type: ignore
 
+import sys
+import traceback
+from types import TracebackType
 from typing import final, Optional
 
 # fmt: off
-from lldb import ( eFormatBytes, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
+from lldb import ( SBTypeNameSpecifier, eFormatBytes, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
                   eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, 
                   eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, 
                   eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, 
                   eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, 
-                  eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer)
-from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger)
+                  eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer, eTypeOptionCascade)
+from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger, SBTypeSummary, SBTypeSynthetic)
 # fmt: on
 from enum import Enum
 import weakref
@@ -24,18 +24,22 @@ import weakref
 UINT32_MAX = 4294967295
 INT32_MAX = 2147483647
 
+PRINT_VERBOSE = True
+PRINT_TRACE = False
+
 # Summary string config
 NULL_SUMMARY = "<null>"
-EMPTY_SUMMARY = "<empty>"
-INVALID_SUMMARY = "<invalid>"
-SIZE_SUMMARY = "<size: {0}>"
+NIL_SUMMARY = "<nil>"  # Variant nil
+EMPTY_SUMMARY = "<empty>" # Empty string, nodepath, etc.
+INVALID_SUMMARY = "<invalid>" # Invalid pointer, uninitialized objects, etc.
+LIST_FORMAT= "{type_name_without_template_args}[{size}]{{{children}}}"
+# LIST_FORMAT= "{type_name}[{size}]{{{children}}}"
 SUMM_STR_MAX_LEN = 100
 MAX_DEPTH = 5
 MAX_CHILDREN_IN_SUMMARY = 6
-PRINT_VERBOSE = False
-PRINT_TRACE = False
-STRINGS_STILL_32_BIT = True  # if true, strings are still 32-bit
+NAMED_COLOR_ANNOTATION = True # if true, will annotate color summaries with their named color if applicable
 
+STRINGS_STILL_32_BIT = True  # if true, strings are still 32-bit
 
 # Synthetic list-like configs; because linked-lists need to traverse the list to get a specific element, we need to cache the members to be performant.
 NO_CACHE_MEMBERS = False
@@ -46,10 +50,10 @@ CACHE_FETCH_MAX = 5000
 
 # If true, will force the usage of compatiblity settings with the MIDebugger interface (i.e. the official MS C++ vscode debugger `cppdbg`)
 # This is only neccessary if you are using the MIDebugger interface, and not the LLDB interface (e.g. `codelldb` debugger extension for vscode)
-MIDEBUGGER_COMPAT = True  
+MIDEBUGGER_COMPAT = True
 
 # If true, will display children in HashMaps in a key-value list style (e.g. ["key"] = "value"); if false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")
-g_HASH_MAP_KEY_VAL_LIST_STYLE = False 
+g_HASH_MAP_KEY_VAL_LIST_STYLE = False
 
 # If true, will sanitize string summaries to escape all characters
 g_SANITIZE_STRING_SUMMARY = True
@@ -145,8 +149,11 @@ def GetFloat(valobj: SBValue) -> float:
         return dataArg.GetFloat(SBError(), 0)  # type: ignore
 
 
-def GetFloatStr(valobj: SBValue) -> str:
-    return str(GetFloat(valobj))
+def GetFloatStr(valobj: SBValue, short: bool = False) -> str:
+    val = GetFloat(valobj)
+    if short:
+        return "{:.3f}".format(val)
+    return str(val)
 
 
 def Variant_GetValue(valobj: SBValue):
@@ -341,6 +348,8 @@ def Variant_GetValue(valobj: SBValue):
 class _SBSyntheticValueProviderWithSummary(SBSyntheticValueProvider):
     def get_summary(self) -> str:
         raise Exception("Not implemented")
+    def check_valid(self, obj: SBValue) -> bool:
+        raise Exception("Not implemented")
 
 
 class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
@@ -349,31 +358,22 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
 
     @classmethod
     def get_synth_summary(cls, valobj: SBValue, internal_dict) -> str:
-        try:
-            obj_id = valobj.GetIndexOfChildWithName("$$object-id$$")
-            if obj_id == None or obj_id == UINT32_MAX:
-                # return cls(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
-                return "<EXCEPTION>: No object-id"
-            if obj_id not in GodotSynthProvider.synth_by_id:
-                # return cls(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
-                return "<EXCEPTION>: No synth provider for object id " + str(obj_id)
-            synth_provider = GodotSynthProvider.synth_by_id[obj_id]
-            if synth_provider is None:  # type: ignore
-                # return cls(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
-                return "<EXCEPTION>: No synth provider for object id " + str(obj_id)  # type: ignore
-                # if valobj.IsSynthetic():
-                #     return INVALID_SUMMARY
-                # else:
-                #     synth_provider = cls(valobj.GetNonSyntheticValue(), internal_dict, True)
-        except Exception as e:
-            msg = "EXCEPTION GodotSynthProvider before get_summary(): " + str(e)
-            print_verbose(msg)
-            return "EXCEPTION GodotSynthProvider before get_summary(): " + str(e)
-        try:
-            return synth_provider.get_summary()
-        except Exception as e:
-            print_verbose(str(e))
-            return "EXCEPTION GodotSynthProvider get_summary(): " + str(e)
+        obj_id = valobj.GetIndexOfChildWithName("$$object-id$$")
+        if obj_id == None or obj_id == UINT32_MAX:
+            # return cls(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
+            raise Exception("No object-id")
+        if obj_id not in GodotSynthProvider.synth_by_id:
+            # return cls(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
+            raise Exception("No synth provider for object id " + str(obj_id))
+        synth_provider = GodotSynthProvider.synth_by_id[obj_id]
+        if synth_provider is None:  # type: ignore
+            # return cls(valobj.GetNonSyntheticValue(), internal_dict, True).get_summary()
+            raise Exception("No synth provider for object id " + str(obj_id))  # type: ignore
+            # if valobj.IsSynthetic():
+            #     return INVALID_SUMMARY
+            # else:
+            #     synth_provider = cls(valobj.GetNonSyntheticValue(), internal_dict, True)
+        return synth_provider.get_summary()
 
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         self.valobj = valobj
@@ -412,13 +412,30 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
 
     # _SBSyntheticValueProviderWithSummary
     def get_summary(self) -> str:
+        if not self.check_valid(self.valobj):
+            return INVALID_SUMMARY
         return GenericShortSummary(self.valobj, self.internal_dict)
+
+    def check_valid(self, obj: SBValue) -> bool:
+        print("check_valid not implemented")
+        return False
 
 
 class Variant_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         super().__init__(valobj, internal_dict, is_summary)
         self.update()
+    
+    def check_valid(self, obj: SBValue) -> bool:
+        variant_type = obj.GetChildMemberWithName("type").GetValueAsUnsigned()
+        data = Variant_GetValue(obj)
+        if variant_type < VariantType.NIL.value or variant_type >= VariantType.VARIANT_MAX.value:
+            return False
+        if VariantType.NIL.value == variant_type:
+            return True
+        if data is None or not data.IsValid():
+            return False
+        return True
 
     def _get_variant_type(self):
         return self.valobj.GetChildMemberWithName("type").GetValueAsUnsigned()
@@ -428,14 +445,12 @@ class Variant_SyntheticProvider(GodotSynthProvider):
         self.variant_type = self._get_variant_type()
 
     def get_summary(self):
+        if not self.check_valid(self.valobj):
+            return INVALID_SUMMARY
         type = self.variant_type
         if type == VariantType.NIL.value:
-            return "nil"
-        elif type >= VariantType.VARIANT_MAX.value:
-            return INVALID_SUMMARY
+            return NIL_SUMMARY
         data = self.data
-        if data is None or not data.IsValid():
-            return INVALID_SUMMARY
         if type == VariantType.BOOL.value:
             return "true" if data.GetValueAsUnsigned() != 0 else "false"
         elif type == VariantType.INT.value:
@@ -454,7 +469,7 @@ class Variant_SyntheticProvider(GodotSynthProvider):
             return summary
 
     def num_children(self):
-        if self.variant_type == VariantType.NIL.value or self.variant_type >= VariantType.VARIANT_MAX.value:
+        if self.variant_type <= VariantType.NIL.value or self.variant_type >= VariantType.VARIANT_MAX.value:
             return 0
         else:
             if self.data is None:
@@ -494,34 +509,31 @@ def strip_quotes(val: str):
 
 
 def NodePath_SummaryProvider(valobj: SBValue, internal_dict):
-    try:
-        rstr = ""
-        data: SBValue = valobj.GetChildMemberWithName("data")
-        if data.GetValueAsUnsigned() == 0:
-            return NULL_SUMMARY
-        if not is_valid_pointer(data):
-            return INVALID_SUMMARY
-        path = Vector_SyntheticProvider(data.GetChildMemberWithName("path").GetNonSyntheticValue(), internal_dict)
-        subpath = Vector_SyntheticProvider(data.GetChildMemberWithName("subpath").GetNonSyntheticValue(), internal_dict)
-        path_size = path.num_children()
-        subpath_size = subpath.num_children()
-        if path_size == 0 and subpath_size == 0:
-            return EMPTY_SUMMARY
-        is_absolute = data.GetChildMemberWithName("absolute").GetValueAsUnsigned()
-        if is_absolute != 0:
-            rstr = "/"
-        for i in range(path_size):
-            rstr += strip_quotes(path.get_child_at_index(i).GetSummary())
-            if i < path.num_children() - 1:
-                rstr += "/"
-        if subpath_size > 0:
+    rstr = ""
+    data: SBValue = valobj.GetChildMemberWithName("data")
+    if data.GetValueAsUnsigned() == 0:
+        return NULL_SUMMARY
+    if not is_valid_pointer(data):
+        return INVALID_SUMMARY
+    path = Vector_SyntheticProvider(data.GetChildMemberWithName("path").GetNonSyntheticValue(), internal_dict)
+    subpath = Vector_SyntheticProvider(data.GetChildMemberWithName("subpath").GetNonSyntheticValue(), internal_dict)
+    path_size = path.num_children()
+    subpath_size = subpath.num_children()
+    if path_size == 0 and subpath_size == 0:
+        return EMPTY_SUMMARY
+    is_absolute = data.GetChildMemberWithName("absolute").GetValueAsUnsigned()
+    if is_absolute != 0:
+        rstr = "/"
+    for i in range(path_size):
+        rstr += strip_quotes(path.get_child_at_index(i).GetSummary())
+        if i < path.num_children() - 1:
+            rstr += "/"
+    if subpath_size > 0:
+        rstr += ":"
+    for i in range(subpath_size):
+        rstr += strip_quotes(subpath.get_child_at_index(i).GetSummary())
+        if i < subpath_size - 1:
             rstr += ":"
-        for i in range(subpath_size):
-            rstr += strip_quotes(subpath.get_child_at_index(i).GetSummary())
-            if i < subpath_size - 1:
-                rstr += ":"
-    except Exception as e:
-        rstr = "EXCEPTION: " + str(e)
     return rstr
 
 
@@ -549,10 +561,12 @@ def Signal_SummaryProvider(valobj: SBValue, internal_dict):
     # Signal has a StringName name and an ObjectID object
     name: SBValue = valobj.GetChildMemberWithName("name")
     object: SBValue = valobj.GetChildMemberWithName("object")
-    return "{{name:{0}, object:{1}}}".format(
-        name.GetSummary(),
-        object.GetSummary(),
-    )
+    name_summary, object_summary = name.GetSummary(), object.GetSummary()
+    if not name_summary or not object_summary:
+        return INVALID_SUMMARY
+    if NULL_SUMMARY in name_summary and NULL_SUMMARY in object_summary:
+        return "{{<Signal> {0}}}".format(NULL_SUMMARY)
+    return "{{<Signal> name:{0}, object:{1}}}".format(name_summary, object_summary)
 
 
 def Callable_SummaryProvider(valobj: SBValue, internal_dict):
@@ -642,24 +656,82 @@ def Rect2i_SummaryProvider(valobj: SBValue, internal_dict):
         valobj.GetChildMemberWithName("size").GetChildMemberWithName("y").GetValueAsSigned(),
     )
 
+def ValCheck(val: SBValue) -> SBValue:
+    if not val:
+        raise Exception("SBValue is None")
+    error = val.GetError()
+    if error.Fail() or not val.IsValid():
+        fmt_err = f'{val.GetName()}: ' if val.GetName() else ''
+        if error.Fail():
+            raise Exception(fmt_err + error.GetCString())
+        else:
+            raise Exception(fmt_err + 'SBValue is not valid')
+    return val
 
-import math
+
+def ConstructNamedColorTable(global_named_colors_table: SBValue) -> dict[str, str]:
+    table: dict[str, str] = dict[str, str]()
+    try:
+        for i in range(global_named_colors_table.GetNumChildren()):
+            named_color = ValCheck(global_named_colors_table.GetChildAtIndex(i))
+            name_val = ValCheck(named_color.GetChildMemberWithName("name"))
+            name_val_summary = name_val.GetSummary()
+            if not name_val_summary: # nullptr at the end of the array
+                break
+            name = strip_quotes(name_val_summary)
+            color = ValCheck(named_color.GetChildMemberWithName("color"))
+            hex_str = GetHexColor(*GetColorVals(color))
+            table[hex_str] = name
+    except Exception as e:
+        print_verbose(f"EXCEPTION ConstructNamedColorTable: " + str(e))
+        return dict[str, str]()
+    return table
+
+constructed_the_table = False
+hex_color_to_name: dict[str, str] = {}
+
+def TryConstructNamedColorTable(target: SBTarget) -> None:
+    global constructed_the_table
+    if not constructed_the_table:
+        global hex_color_to_name
+        named_colors =  target.FindFirstGlobalVariable("named_colors")
+        if not named_colors or not named_colors.IsValid() or named_colors.GetNumChildren() == 0:
+            return # return without setting constructed_the_table; we might not be in the right context to do this
+        hex_color_to_name = ConstructNamedColorTable(named_colors)
+        constructed_the_table = True
+        # print_trace(str(hex_color_to_name))
 
 
-def _get_hex(val: float):
-    new_val = max(min(round(val * 255), 255), 0)
-    return "{:02x}".format(new_val)
+def GetColorAlias(valobj: SBValue, vals: tuple[float,float,float,float] = None) -> str:
+    r, g, b, a = vals if vals else GetColorVals(valobj)
+    hex_str = GetHexColor(r,g,b,a)
+    TryConstructNamedColorTable(valobj.target)
+    if hex_str in hex_color_to_name:
+        hex_str = hex_color_to_name[hex_str]
+    return hex_str
 
+def GetHexColor(r,g,b,a) -> str:
+    def _get_hex(val: float):
+        new_val = max(min(round(val * 255), 255), 0)
+        return "{:02x}".format(new_val)
+    r_hex, g_hex, b_hex, a_hex = _get_hex(r), _get_hex(g), _get_hex(b), _get_hex(a)
+    return "#{0}{1}{2}{3}".format(r_hex, g_hex, b_hex, a_hex)
 
-def Color_SummaryProvider(valobj: SBValue, internal_dict):
-    r, g, b, a = (
+def GetColorVals(valobj: SBValue):
+    return (
         GetFloat(valobj.GetChildMemberWithName("r")),
         GetFloat(valobj.GetChildMemberWithName("g")),
         GetFloat(valobj.GetChildMemberWithName("b")),
         GetFloat(valobj.GetChildMemberWithName("a")),
     )
-    r_hex, g_hex, b_hex, a_hex = _get_hex(r), _get_hex(g), _get_hex(b), _get_hex(a)
-    return "{{<#{0}{1}{2}{3}> r:{4}, g:{5}, b:{6}, a:{7}}}".format(r_hex, g_hex, b_hex, a_hex, r, g, b, a)
+
+def Color_SummaryProvider(valobj: SBValue, internal_dict):
+    r, g, b, a = GetColorVals(valobj)
+    if not NAMED_COLOR_ANNOTATION:
+        hex_str = GetHexColor(r,g,b,a)
+    else:
+        hex_str = GetColorAlias(valobj, (r, g, b, a))
+    return "{{<{0}> r:{1:.3f}, g:{2:.3f}, b:{3:.3f}, a:{4:.3f}}}".format(hex_str, r, g, b, a)
 
 
 def Plane_SummaryProvider(valobj: SBValue, internal_dict):
@@ -716,41 +788,40 @@ def RID_SummaryProvider(valobj: SBValue, internal_dict):
 
 
 def String_SummaryProvider(valobj: SBValue, internal_dict):
-    try:
-        _cowdata: SBValue = valobj.GetChildMemberWithName("_cowdata")
-        size = _get_cowdata_size(_cowdata)
-        if size is None:
-            # check if this is a pointer to a pointer
-            type = valobj.GetType()
-            if type.IsPointerType() and type.GetPointeeType().IsPointerType():
-                return "{...}"
-            return INVALID_SUMMARY
-        if size == 0:
-            return EMPTY_SUMMARY
-        if (
-            STRINGS_STILL_32_BIT and size > INT32_MAX
-        ):  # while cowdata has been promoted to 64-bits, this is still the limit for strings
-            return INVALID_SUMMARY
-        _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
-        _ptr.format = eFormatUnicode32
-        if g_SANITIZE_STRING_SUMMARY:
-            ret = _ptr.GetSummary()
-            if ret.startswith("U\""):
-                ret = '"' + ret.removeprefix("U\"")
-            return ret
-        data = _ptr.GetPointeeData(0, size)
-        error: SBError = SBError()
-        arr: bytearray = bytearray()
-        for i in range(data.size):
-            var = data.GetUnsignedInt8(error, i)
-            arr.append(var)
-        starr = arr.decode("utf-32LE")
-        if starr.endswith("\x00"):
-            starr = starr[:-1]
-        return '"{0}"'.format(starr)
-    except Exception as e:
-        return "<String: EXCEPTION: " + str(e) + ">" + str(size)
+    _cowdata: SBValue = valobj.GetChildMemberWithName("_cowdata")
+    size = _get_cowdata_size(_cowdata)
+    if size is None:
+        # check if this is a pointer to a pointer
+        type = valobj.GetType()
+        if type.IsPointerType() and type.GetPointeeType().IsPointerType():
+            return "{...}"
+        return INVALID_SUMMARY
+    if size == 0:
+        return EMPTY_SUMMARY
 
+    # While cowdata has been promoted to 64-bits, this is still the limit for strings
+    if ( STRINGS_STILL_32_BIT and size > INT32_MAX ): 
+        return INVALID_SUMMARY
+    _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
+    _ptr.format = eFormatUnicode32
+    if g_SANITIZE_STRING_SUMMARY:
+        ret = _ptr.GetSummary()
+        if ret is None:
+            print_trace("String_SummaryProvider: _ptr.GetSummary() returned None")
+            return EMPTY_SUMMARY
+        if ret.startswith("U\""):
+            ret = '"' + ret.removeprefix("U\"")
+        return ret
+    data = _ptr.GetPointeeData(0, size)
+    error: SBError = SBError()
+    arr: bytearray = bytearray()
+    for i in range(data.size):
+        var = data.GetUnsignedInt8(error, i)
+        arr.append(var)
+    starr = arr.decode("utf-32LE")
+    if starr.endswith("\x00"):
+        starr = starr[:-1]
+    return '"{0}"'.format(starr)
 
 def is_basic_printable_type(type: SBType):
     if type.GetTypeClass() == eTypeClassEnumeration:
@@ -1025,6 +1096,17 @@ def pointer_exists_and_is_null(ptr: SBValue) -> bool:
 
 
 # Cowdata size is located at the cowdata address - 8 bytes (sizeof(uint64_t))
+def get_exception_trace(e: Exception, before_exception_limit=5, _this_call_depth = 2) -> str:
+    stack_prefix = 'Traceback (most recent call last):\n'
+    exception_trace = traceback.format_exception(type(e), e, e.__traceback__)
+    stack_trace_str = ''.join(exception_trace[1:]).replace('\\n', '\n')
+    if before_exception_limit > 0:
+        before_exc_stack_trace = traceback.format_stack(limit=(before_exception_limit + 2))
+        stack_trace_str = ''.join(before_exc_stack_trace[:-_this_call_depth]).replace('\\n', '\n') + "Handled:\n" + stack_trace_str
+    return stack_prefix + stack_trace_str
+
+def print_exception_trace(e: Exception, before_exception_limit=5) -> None:
+    print(get_exception_trace(e, before_exception_limit, 3))
 
 
 def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
@@ -1032,6 +1114,8 @@ def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
     size = 0
     if not _cowdata or not _cowdata.IsValid():
         print_trace("COWDATASIZE Invalid: _cowdata is not valid")
+        stack_fmt = traceback.format_stack()
+        print_trace(''.join(stack_fmt[:-1]).replace('\\n', '\n'))
         return None
     try:
         _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
@@ -1046,7 +1130,13 @@ def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
             return None
         uint64_type: SBType = _cowdata.GetTarget().GetBasicType(eBasicTypeUnsignedLongLong)
         ptr_addr_val = _ptr.GetValueAsUnsigned()
+        if ptr_addr_val - 8 < 0:
+            print_trace("COWDATASIZE Invalid: ptr_addr_val - 8 is less than 0: " + str(ptr_addr_val))
+            return None
         size_child: SBValue = _ptr.CreateValueFromAddress("size", ptr_addr_val - 8, uint64_type)
+        if not size_child.IsValid():
+            print_trace("COWDATASIZE Invalid: Size value at ptr_addr - 8 is not valid")
+            return None
         size = size_child.GetValueAsSigned()
         if size < 0:
             print_trace("COWDATASIZE Invalid: Size is less than 0: " + str(size))
@@ -1060,10 +1150,12 @@ def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
                 print_trace("COWDATASIZE Invalid: Last value is not valid: " + str(last_val))
                 return None
     except Exception as e:
-        print_trace("COWDATASIZE EXCEPTION:" + str(e))
+        print_verbose("COWDATASIZE Exception: " + str(e))
+        print_trace(get_exception_trace(e))
         return None
 
     return size
+
 
 
 def is_cowdata_valid(_cowdata: SBValue) -> bool:
@@ -1133,7 +1225,7 @@ def GenericShortSummary(
         try:
             summ = valobj.GetSummary()
         except Exception as e:
-            summ = " !!EXCEPTION: " + str(e)
+            summ = " GetSummary() EXCEPTION: " + str(e)
             summ += " " + str(valobj.GetDisplayTypeName())
     if summ:
         return summ
@@ -1144,10 +1236,12 @@ def GenericShortSummary(
     summ_str = "{"
     try:
         num_children = valobj.GetNumChildren()
+        skipped_base_class = False
         for i in range(num_children):
             child: SBValue = valobj.GetChildAtIndex(i)
             prefix = child.name + ":"
             if skip_base_class and base_class_names.count(child.name) > 0:
+                skipped_base_class = True
                 continue
             if is_basic_printable_type(child.GetType()):
                 summ_str += prefix + get_basic_printable_string(child)
@@ -1163,6 +1257,8 @@ def GenericShortSummary(
                 summ_str += ", "
         if summ_str == "{":
             summ_str += "..."
+        if not summ_str.endswith(", ...") and skipped_base_class:
+            summ_str += ", ..."
         summ_str += "}"
     except Exception as e:
         summ_str += " !!EXCEPTION: " + str(e)
@@ -1190,11 +1286,12 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         super().__init__(valobj, internal_dict, is_summary)
         self.key_template_type: SBType = self.get_key().GetType()
-        self.key_val_element_style: bool = False
-        if g_HASH_MAP_KEY_VAL_LIST_STYLE and (
-            is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type)
-        ):
-            self.key_val_element_style = True
+        self.key_val_element_style: bool = g_HASH_MAP_KEY_VAL_LIST_STYLE and (is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type))
+
+    def check_valid(self, valobj: SBValue) -> bool:
+        if not valobj or not valobj.IsValid():
+            return False
+        return True
 
     def get_index_of_child(self, name):
         if name == "[key]":
@@ -1238,6 +1335,8 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
         return True
 
     def get_summary(self):
+        if not self.check_valid(self.valobj):
+            return INVALID_SUMMARY
         value_summary = GenericShortSummary(self.get_value(), self.internal_dict)
         if self.key_val_element_style:  # only show the value for the summary
             return value_summary
@@ -1306,21 +1405,20 @@ class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
     #     return self.valobj.CreateValueFromData("[size]", SBData.CreateDataFromInt(self.num_elements), self.valobj.target.GetBasicType(eBasicTypeUnsignedInt))
 
     def get_children_summary(self, max_children=MAX_CHILDREN_IN_SUMMARY) -> str:
-        try:
-            max_children = min(MAX_CHILDREN_IN_SUMMARY, self.num_elements)
-            i: int = 0
-            summ_str = ""
-            for i in range(max_children):
-                summ_str += self._get_child_summary(i)
-                if len(summ_str) > SUMM_STR_MAX_LEN:
-                    break
-                if max_children != 1 and i < max_children - 1:
-                    summ_str += ", "
-            if self.num_elements > i + 1:
-                summ_str += ", ..."
-            return summ_str
-        except Exception as e:
-            return "<ERROR>: " + str(e)
+        if self.num_elements == 0:
+            return ''
+        max_children = min(MAX_CHILDREN_IN_SUMMARY, self.num_elements)
+        i: int = 0
+        summ_str = ""
+        for i in range(max_children):
+            summ_str += self._get_child_summary(i)
+            if len(summ_str) > SUMM_STR_MAX_LEN:
+                break
+            if max_children != 1 and i < max_children - 1:
+                summ_str += ", "
+        if self.num_elements > i + 1:
+            summ_str += ", ..."
+        return summ_str
 
     def get_child_at_index(self, idx) -> SBValue:
         return self._create_child_at_element_index(idx)
@@ -1338,14 +1436,10 @@ class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
             return None
 
     def get_summary(self) -> str:
-        try:
-            prefix = "{" + SIZE_SUMMARY.format(self.num_elements)
-            if self.num_elements == 0:
-                return prefix + "}"
-            return prefix + " " + self.get_children_summary() + "}"
-        except Exception as e:
-            print_verbose("EXCEPTION: " + str(e))
-            return "<ERROR>: " + str(e)
+        if not self.check_valid(self.valobj):
+            return INVALID_SUMMARY
+        return LIST_FORMAT.format(type_name = self.typename, type_name_without_template_args = self.typename.split('<')[0], size=self.num_elements, children=self.get_children_summary())
+        
 
 
 class PagedArray_SyntheticProvider(_ListOfChildren_SyntheticProvider):
@@ -1550,10 +1644,7 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
         if self.num_elements == 0:
             return
         self.key_template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0)
-        if g_HASH_MAP_KEY_VAL_LIST_STYLE and (
-            is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type)
-        ):
-            self.key_val_element_style = True
+        self.key_val_element_style = g_HASH_MAP_KEY_VAL_LIST_STYLE and (is_string_type(self.key_template_type) or is_basic_integer_type(self.key_template_type))
         pointer_to_array_type = self.ptr.GetType().GetPointeeType().GetArrayType(self.num_elements).GetPointerType()
         self.ptr_cast = self.ptr.Cast(pointer_to_array_type)
         self.cached_key_summaries = list[str]()
@@ -1962,13 +2053,13 @@ class _Proxy_SyntheticProvider(GodotSynthProvider):
         """
         raise Exception("Not implemented")
 
+    def check_valid(self, obj: SBValue):
+        return self.synth_proxy and self.synth_proxy.check_valid(self.synth_proxy.valobj)
+
     def get_summary(self):
-        try:
-            if self.synth_proxy:
-                return self.synth_proxy.get_summary()
-        except Exception as e:
-            return "EXCEPTION: " + str(e)
-        return "{" + SIZE_SUMMARY.format(0) + "}"
+        if self.synth_proxy:
+            return self.synth_proxy.get_summary()
+        return INVALID_SUMMARY
 
     def num_children(self):
         if self.synth_proxy:
@@ -2051,16 +2142,15 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
             self.write_pos = self.valobj.GetChildMemberWithName("write_pos").GetValueAsSigned() & self.size_mask
 
     def get_summary(self):
-        try:
-            if self.synth_proxy and self.synth_proxy.num_elements > 0:
-                read_pos_summary = "<read_pos:{0}>".format(self.read_pos)
-                write_pos_summary = "<write_pos:{0}>".format(self.write_pos)
-                size_summary = SIZE_SUMMARY.format(self.synth_proxy.num_elements)
-                children_summary = self.synth_proxy.get_children_summary()
-                return f"{{{read_pos_summary} {write_pos_summary} {size_summary} {children_summary}}}"
-        except Exception as e:
-            return "EXCEPTION: " + str(e)
-        return "{" + SIZE_SUMMARY.format(0) + "}"
+        if not self.check_valid(self.valobj):
+            return INVALID_SUMMARY
+        if self.synth_proxy and self.synth_proxy.num_elements > 0:
+            read_pos_summary = "<read_pos:{0}>".format(self.read_pos)
+            write_pos_summary = "<write_pos:{0}>".format(self.write_pos)
+            size_summary = "<size:{0}>".format(self.synth_proxy.num_elements)
+            children_summary = self.synth_proxy.get_children_summary()
+            return f"{{{read_pos_summary} {write_pos_summary} {size_summary} {children_summary}}}"
+        return LIST_FORMAT.format(type_name='RingBuffer', type_name_without_template_args='RingBuffer', size = 0, children = '')
 
     def num_children(self):
         if self.synth_proxy:
@@ -2096,6 +2186,8 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
         return None
 
 
+
+
 # turn off black-formatter
 # fmt: off
 
@@ -2117,64 +2209,97 @@ RBMAP_PATTERN:str = "^(::)?RBMap<.+,.+(,[^,]+){0,2}>$"
 RBMAP_ELEMENT_PATTERN:str = "^(::)?RBMap<.+,.+(,[^,]+){0,2}>::Element$"
 
 
-SYNTHETIC_PROVIDERS: dict[str,str] = {
-    "^(::)?Variant$":     "Variant_SyntheticProvider",
-    HASH_MAP_ELEMENT_PATTERN: "HashMapElement_SyntheticProvider",
-    VECTOR_PATTERN:       "Vector_SyntheticProvider",
-    LIST_PATTERN:         "List_SyntheticProvider",
-    HASHSET_PATTERN:      "HashSet_SyntheticProvider",
-    ARRAY_PATTERN:        "Array_SyntheticProvider",
-    TYPEDARRAY_PATTERN:   "Array_SyntheticProvider",
-    HASHMAP_PATTERN:      "HashMap_SyntheticProvider",
-    DICTIONARY_PATTERN:   "Dictionary_SyntheticProvider",
-    VMAP_PATTERN:         "VMap_SyntheticProvider",
-    VSET_PATTERN:         "VSet_SyntheticProvider",
-    RINGBUFFER_PATTERN:   "RingBuffer_SyntheticProvider",
-    LOCAL_VECTOR_PATTERN: "LocalVector_SyntheticProvider",
-    PAGED_ARRAY_PATTERN:  "PagedArray_SyntheticProvider",
-    RBMAP_PATTERN:        "RBMap_SyntheticProvider",
-    RBMAP_ELEMENT_PATTERN:"RBMapElement_SyntheticProvider",
+SYNTHETIC_PROVIDERS: dict[str,type] = {
+    "^(::)?Variant$":          Variant_SyntheticProvider,
+    HASH_MAP_ELEMENT_PATTERN:  HashMapElement_SyntheticProvider,
+    VECTOR_PATTERN:            Vector_SyntheticProvider,
+    LIST_PATTERN:              List_SyntheticProvider,
+    HASHSET_PATTERN:           HashSet_SyntheticProvider,
+    ARRAY_PATTERN:             Array_SyntheticProvider,
+    TYPEDARRAY_PATTERN:        Array_SyntheticProvider,
+    HASHMAP_PATTERN:           HashMap_SyntheticProvider,
+    DICTIONARY_PATTERN:        Dictionary_SyntheticProvider,
+    VMAP_PATTERN:              VMap_SyntheticProvider,
+    VSET_PATTERN:              VSet_SyntheticProvider,
+    RINGBUFFER_PATTERN:        RingBuffer_SyntheticProvider,
+    LOCAL_VECTOR_PATTERN:      LocalVector_SyntheticProvider,
+    PAGED_ARRAY_PATTERN:       PagedArray_SyntheticProvider,
+    RBMAP_PATTERN:             RBMap_SyntheticProvider,
+    RBMAP_ELEMENT_PATTERN:     RBMapElement_SyntheticProvider,
 }
 
-SUMMARY_PROVIDERS: list[list[str]] = [
-    ["^(::)?String$", "String_SummaryProvider"],
-    ["^(::)?Ref<.+>$", "Ref_SummaryProvider"],
-    ["^(::)?Vector2$", "Vector2_SummaryProvider"],
-    ["^(::)?Vector2i$", "Vector2i_SummaryProvider"],
-    ["^(::)?Rect2$", "Rect2_SummaryProvider"],
-    ["^(::)?Rect2i$", "Rect2i_SummaryProvider"],
-    ["^(::)?Vector3$", "Vector3_SummaryProvider"],
-    ["^(::)?Vector3i$", "Vector3i_SummaryProvider"],
-    ["^(::)?Transform2D$", "Transform2D_SummaryProvider"],
-    ["^(::)?Vector4$", "Vector4_SummaryProvider"],
-    ["^(::)?Vector4i$", "Vector4i_SummaryProvider"],
-    ["^(::)?Plane$", "Plane_SummaryProvider"],
-    ["^(::)?Quaternion$", "Quaternion_SummaryProvider"],
-    ["^(::)?AABB$", "AABB_SummaryProvider"],
-    ["^(::)?Basis$", "Basis_SummaryProvider"],
-    ["^(::)?Transform3D$", "Transform3D_SummaryProvider"],
-    ["^(::)?Projection$", "Projection_SummaryProvider"],
-    ["^(::)?Color$", "Color_SummaryProvider"],
-    ["^(::)?StringName$", "StringName_SummaryProvider"],
-    ["^(::)?NodePath$", "NodePath_SummaryProvider"],
-    ["^(::)?RID$", "RID_SummaryProvider"],
-    ["^(::)?Callable$", "Callable_SummaryProvider"],
-    ["^(::)?Signal$", "Signal_SummaryProvider"],
-    ["^(::)?ObjectID$", "ObjectID_SummaryProvider"],
-    [VMAP_PAIR_PATTERN, "VMap_Pair_SummaryProvider"],
-]
-SUMMARY_ADD_COMMAND = 'type summary add -x "{0}" -e -F {1}.{2}'
-SYNTHETIC_ADD_COMMAND = 'type synthetic add -x "{0}" -l {1}.{2}'
+SUMMARY_PROVIDERS: dict[str,object] = {
+    "^(::)?String$":        String_SummaryProvider,
+    "^(::)?Ref<.+>$":       Ref_SummaryProvider,
+    "^(::)?Vector2$":       Vector2_SummaryProvider,
+    "^(::)?Vector2i$":      Vector2i_SummaryProvider,
+    "^(::)?Rect2$":         Rect2_SummaryProvider,
+    "^(::)?Rect2i$":        Rect2i_SummaryProvider,
+    "^(::)?Vector3$":       Vector3_SummaryProvider,
+    "^(::)?Vector3i$":      Vector3i_SummaryProvider,
+    "^(::)?Transform2D$":   Transform2D_SummaryProvider,
+    "^(::)?Vector4$":       Vector4_SummaryProvider,
+    "^(::)?Vector4i$":      Vector4i_SummaryProvider,
+    "^(::)?Plane$":         Plane_SummaryProvider,
+    "^(::)?Quaternion$":    Quaternion_SummaryProvider,
+    "^(::)?AABB$":          AABB_SummaryProvider,
+    "^(::)?Basis$":         Basis_SummaryProvider,
+    "^(::)?Transform3D$":   Transform3D_SummaryProvider,
+    "^(::)?Projection$":    Projection_SummaryProvider,
+    "^(::)?Color$":         Color_SummaryProvider,
+    "^(::)?StringName$":    StringName_SummaryProvider,
+    "^(::)?NodePath$":      NodePath_SummaryProvider,
+    "^(::)?RID$":           RID_SummaryProvider,
+    "^(::)?Callable$":      Callable_SummaryProvider,
+    "^(::)?Signal$":        Signal_SummaryProvider,
+    "^(::)?ObjectID$":      ObjectID_SummaryProvider,
+    VMAP_PAIR_PATTERN:      VMap_Pair_SummaryProvider,
+}
 
-# Don't need these for now.
-# SUMMARY_DELETE_COMMAND = 'type summary delete "{0}"'
-# SYNTHETIC_DELETE_COMMAND = 'type synthetic delete "{0}"'
+module = sys.modules[__name__]
+cpp_category = None
+def attach_synthetic_to_type(type_name, synth_class: type, is_regex=True):
+    global module, cpp_category
+    # print_trace('attaching synthetic %s to "%s", is_regex=%s' %(synth_class.__name__, type_name, is_regex))
+    synth = SBTypeSynthetic.CreateWithClassName(__name__ + '.' + synth_class.__name__)
+    synth.SetOptions(eTypeOptionCascade)
+    cpp_category.AddTypeSynthetic(SBTypeNameSpecifier(type_name, is_regex), synth)
+    attach_summary_to_type(type_name, synth_class.get_synth_summary, is_regex, real_fn_name=(str(synth_class.__name__) + ".get_synth_summary"))
+
+def attach_summary_to_type(type_name, real_summary_fn, is_regex=False, real_fn_name: str =None):
+    global module, cpp_category
+    if not real_fn_name:
+        real_fn_name = str(real_summary_fn.__qualname__)
+    def __spfunc(valobj, dict):
+        try:
+            return real_summary_fn(valobj, dict)
+        except Exception as e:
+            err_msg = "ERROR in " + real_fn_name + ": " + str(e)
+            print_verbose(err_msg)
+            print_verbose(get_exception_trace(e))
+            return f'<{err_msg}>'
+    # LLDB accesses summary fn's by name, so we need to create a unique one.
+    __spfunc.__name__ = '__' + real_fn_name.replace('.', '_')
+    setattr(module, __spfunc.__name__, __spfunc)
+
+    # print_trace(f'attaching summary {__spfunc.__name__} with real function {real_summary_fn.__qualname__} to {type_name}, is_regex={is_regex}')
+    summary = SBTypeSummary.CreateWithFunctionName(__name__ + '.' + __spfunc.__name__)
+    summary.SetOptions(eTypeOptionCascade)
+    cpp_category.AddTypeSummary(SBTypeNameSpecifier(type_name, is_regex), summary)
+
 
 def __lldb_init_module(debugger : SBDebugger, dict):
     # TODO: figure out a way to detect if the debugger has an MI interface attached
+    global cpp_category
+    cpp_category = debugger.GetDefaultCategory()
     force_compat(MIDEBUGGER_COMPAT)
-    for summary in SUMMARY_PROVIDERS:
-        debugger.HandleCommand(SUMMARY_ADD_COMMAND.format(summary[0], __name__, summary[1]))
+    for key in SUMMARY_PROVIDERS:
+        try:
+            attach_summary_to_type(key, SUMMARY_PROVIDERS[key], True)
+        except Exception as e:
+            print_verbose("EXCEPTION: " + str(e))
     for key in SYNTHETIC_PROVIDERS:
-        debugger.HandleCommand(SUMMARY_ADD_COMMAND.format(key, __name__, SYNTHETIC_PROVIDERS[key] + ".get_synth_summary"))
-        debugger.HandleCommand(SYNTHETIC_ADD_COMMAND.format(key, __name__, SYNTHETIC_PROVIDERS[key]))
+        try:
+            attach_synthetic_to_type(key, SYNTHETIC_PROVIDERS[key], True)
+        except Exception as e:
+            print_verbose("EXCEPTION st: " + str(e))
