@@ -13,7 +13,7 @@ from types import TracebackType
 from typing import final, Optional
 
 # fmt: off
-from lldb import (SBCommandReturnObject, SBExecutionContext, eFormatBytes, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
+from lldb import (SBCommandReturnObject, SBExecutionContext, SBTypeCategory, eFormatBytes, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
                   eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, 
                   eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, 
                   eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, 
@@ -702,7 +702,7 @@ def TryConstructNamedColorTable(target: SBTarget) -> None:
         # print_trace(str(hex_color_to_name))
 
 
-def GetColorAlias(valobj: SBValue, vals: tuple[float, float, float, float] = None) -> str:
+def GetColorAlias(valobj: SBValue, vals: Optional[tuple[float, float, float, float]] = None) -> str:
     r, g, b, a = vals if vals else GetColorVals(valobj)
     hex_str = GetHexColor(r, g, b, a)
     TryConstructNamedColorTable(valobj.target)
@@ -2281,10 +2281,10 @@ SUMMARY_PROVIDERS: dict[str,object] = {
 # fmt: on
 
 module = sys.modules[__name__]
-cpp_category = None
+cpp_category: SBTypeCategory
 
 
-def attach_synthetic_to_type(type_name, synth_class: type, is_regex=True):
+def attach_synthetic_to_type(type_name, synth_class, is_regex=True):
     global module, cpp_category
     # print_trace('attaching synthetic %s to "%s", is_regex=%s' %(synth_class.__name__, type_name, is_regex))
     synth = SBTypeSynthetic.CreateWithClassName(__name__ + "." + synth_class.__name__)
@@ -2298,7 +2298,7 @@ def attach_synthetic_to_type(type_name, synth_class: type, is_regex=True):
     )
 
 
-def attach_summary_to_type(type_name, real_summary_fn, is_regex=False, real_fn_name: str = None):
+def attach_summary_to_type(type_name, real_summary_fn, is_regex=False, real_fn_name: Optional[str] = None):
     global module, cpp_category
     if not real_fn_name:
         real_fn_name = str(real_summary_fn.__qualname__)
