@@ -16,7 +16,7 @@ from types import TracebackType
 from typing import final, Optional
 
 # fmt: off
-from lldb import (SBCommandReturnObject, SBExecutionContext, SBTypeCategory, eFormatBytes, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
+from lldb import (SBCommandReturnObject, SBExecutionContext, SBTypeCategory, eFormatBytes, eFormatCString, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
                   eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, 
                   eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, 
                   eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, 
@@ -1126,6 +1126,44 @@ def String_SummaryProvider(valobj: SBValue, internal_dict):
         var = data.GetUnsignedInt8(error, i)
         arr.append(var)
     starr = arr.decode("utf-32LE")
+    if starr.endswith("\x00"):
+        starr = starr[:-1]
+    return '"{0}"'.format(starr)
+
+
+@print_trace_dec
+def CharString_SummaryProvider(valobj: SBValue, internal_dict):
+    _cowdata: SBValue = valobj.GetChildMemberWithName("_cowdata")
+    size = _get_cowdata_size(_cowdata)
+    if size is None:
+        # check if this is a pointer to a pointer
+        type = valobj.GetType()
+        if type.IsPointerType() and type.GetPointeeType().IsPointerType():
+            return "{...}"
+        return INVALID_SUMMARY
+    if size == 0:
+        return EMPTY_SUMMARY
+
+    # While cowdata has been promoted to 64-bits, this is still the limit for strings
+    if STRINGS_STILL_32_BIT and size > INT32_MAX:
+        return INVALID_SUMMARY
+    _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
+    _ptr.format = eFormatCString
+    if Opts.SANITIZE_STRING_SUMMARY:
+        ret = _ptr.GetSummary()
+        if ret is None:
+            print_trace("String_SummaryProvider: _ptr.GetSummary() returned None")
+            return EMPTY_SUMMARY
+        if ret.startswith('U"'):
+            ret = '"' + ret.removeprefix('U"')
+        return ret
+    data = _ptr.GetPointeeData(0, size)
+    error: SBError = SBError()
+    arr: bytearray = bytearray()
+    for i in range(data.size):
+        var = data.GetUnsignedInt8(error, i)
+        arr.append(var)
+    starr = arr.decode("utf-8")
     if starr.endswith("\x00"):
         starr = starr[:-1]
     return '"{0}"'.format(starr)
@@ -2863,6 +2901,7 @@ SYNTHETIC_PROVIDERS: dict[str,type] = {
 
 SUMMARY_PROVIDERS: dict[str,object] = {
     "^(::)?String$":        String_SummaryProvider,
+    "^(::)?CharString$":    CharString_SummaryProvider,
     "^(::)?Ref<.+>$":       Ref_SummaryProvider,
     "^(::)?Vector2$":       Vector2_SummaryProvider,
     "^(::)?Vector2i$":      Vector2i_SummaryProvider,
