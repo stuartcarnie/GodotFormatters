@@ -261,21 +261,21 @@ def __LLDB_DUMPER():
     }
 
     FLAG_TYPE_ENUMS = [
-        "LaunchFlags"
-        "ByteOrder"
-        "SymbolContextItem"
-        "Permissions"
-        "BreakpointEventType"
-        "WatchpointEventType"
-        "EmulateInstructionOptions"
-        "FunctionNameType"
-        "TypeClass"
-        "TypeOptions"
-        "FilePermissions"
-        "WatchpointKind"
-        "TypeFlags"
-        "CommandFlags"
-        "CompletionType"
+        "LaunchFlags",
+        "ByteOrder",
+        "SymbolContextItem",
+        "Permissions",
+        "BreakpointEventType",
+        "WatchpointEventType",
+        "EmulateInstructionOptions",
+        "FunctionNameType",
+        "TypeClass",
+        "TypeOptions",
+        "FilePermissions",
+        "WatchpointKind",
+        "TypeFlags",
+        "CommandFlags",
+        "CompletionType",
     ]
     INT_TYPES= [
         'size_t',
