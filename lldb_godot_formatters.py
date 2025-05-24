@@ -11,6 +11,7 @@ from time import sleep
 import traceback
 import optparse
 import re
+import json
 
 from types import TracebackType
 from typing import final, Optional
@@ -29,6 +30,10 @@ import weakref
 
 UINT32_MAX = 4294967295
 INT32_MAX = 2147483647
+
+# ********************************************************
+# OPTIONS
+# ********************************************************
 
 
 class GodotFormatterOptions:
@@ -62,7 +67,7 @@ HELP_STRING_MAP = {
     "FILTER": "List of regex filters to apply to trace output",
 }
 
-
+# Compatibility settings
 def force_compat(force_mi_compat: bool):
     if force_mi_compat:
         # MIDebugger refuses to display map children when this is True, forced to False
@@ -89,51 +94,6 @@ STRINGS_STILL_32_BIT = True  # if true, strings are still 32-bit
 MAX_DEPTH = 3
 
 
-# Compatibility settings
-
-
-class VariantType(Enum):
-    NIL = 0
-    BOOL = 1
-    INT = 2
-    FLOAT = 3
-    STRING = 4
-    VECTOR2 = 5
-    VECTOR2I = 6
-    RECT2 = 7
-    RECT2I = 8
-    VECTOR3 = 9
-    VECTOR3I = 10
-    TRANSFORM2D = 11
-    VECTOR4 = 12
-    VECTOR4I = 13
-    PLANE = 14
-    QUATERNION = 15
-    AABB = 16
-    BASIS = 17
-    TRANSFORM3D = 18
-    PROJECTION = 19
-    COLOR = 20
-    STRING_NAME = 21
-    NODE_PATH = 22
-    RID = 23
-    OBJECT = 24
-    CALLABLE = 25
-    SIGNAL = 26
-    DICTIONARY = 27
-    ARRAY = 28
-    PACKED_BYTE_ARRAY = 29
-    PACKED_INT32_ARRAY = 30
-    PACKED_INT64_ARRAY = 31
-    PACKED_FLOAT32_ARRAY = 32
-    PACKED_FLOAT64_ARRAY = 33
-    PACKED_STRING_ARRAY = 34
-    PACKED_VECTOR2_ARRAY = 35
-    PACKED_VECTOR3_ARRAY = 36
-    PACKED_COLOR_ARRAY = 37
-    VARIANT_MAX = 38
-
-
 def print_verbose(val: str):
     if Opts.PRINT_VERBOSE or Opts.PRINT_TRACE:
         print(val)
@@ -144,6 +104,11 @@ def print_trace(val: str, *args, **kwargs):
         # curr_time = datetime.datetime.now().strftime("%H:%M:%S.%f")
         # format = f"[{curr_time}] {val}"
         print(val, *args, **kwargs)
+
+
+# ********************************************************
+# DEBUG TRACING
+# ********************************************************
 
 
 def self_none_if_invalid(func):
@@ -317,6 +282,20 @@ def trace_none_if_invalid_dec(func):
     return wrapper
 
 
+# ********************************************************
+# UTILITIES
+# ********************************************************
+
+
+@print_trace_dec
+def should_use_key_val_style(key_template_type) -> bool:
+    return (
+        Opts.MAP_KEY_VAL_STYLE
+        and key_template_type is not None
+        and (is_string_type(key_template_type) or is_basic_integer_type(key_template_type))
+    )
+
+
 def GetFloat(valobj: SBValue) -> float:
     dataArg: SBData = valobj.GetData()
     if valobj.GetByteSize() > 4:
@@ -332,6 +311,478 @@ def GetFloatStr(valobj: SBValue, short: bool = False) -> str:
     if short:
         return "{:.3f}".format(val)
     return str(val)
+
+
+def is_basic_printable_type(type: SBType):
+    if type.GetTypeClass() == eTypeClassEnumeration:
+        return True
+
+    basic_type = type.GetCanonicalType().GetBasicType()
+    if basic_type == eBasicTypeVoid:
+        return False
+    if basic_type == eBasicTypeInvalid:
+        return False
+    if basic_type == eBasicTypeObjCID:
+        return False
+    if basic_type == eBasicTypeObjCClass:
+        return False
+    if basic_type == eBasicTypeObjCSel:
+        return False
+    return True
+
+
+def is_basic_string_type(type: SBType):
+    # check to see if it's a const char*, const wchar_t*, const char16_t*, const char32_t*
+    if not type.IsPointerType():
+        return False
+    if not "const" in type.name:
+        return False
+    basic_type = type.GetCanonicalType().GetBasicType()
+    if basic_type == eBasicTypeChar:
+        return True
+    if basic_type == eBasicTypeWChar:
+        return True
+    if basic_type == eBasicTypeChar16:
+        return True
+    if basic_type == eBasicTypeChar32:
+        return True
+    return False
+
+
+def is_basic_integer_type(type: SBType):
+    if type is None:
+        return False
+    if type.GetTypeClass() == eTypeClassEnumeration:
+        return True
+    basic_type = type.GetCanonicalType().GetBasicType()
+    if basic_type == eBasicTypeChar:
+        return True
+    if basic_type == eBasicTypeSignedChar:
+        return True
+    if basic_type == eBasicTypeUnsignedChar:
+        return True
+    if basic_type == eBasicTypeWChar:
+        return True
+    if basic_type == eBasicTypeSignedWChar:
+        return True
+    if basic_type == eBasicTypeUnsignedWChar:
+        return True
+    if basic_type == eBasicTypeChar16:
+        return True
+    if basic_type == eBasicTypeChar32:
+        return True
+    if basic_type == eBasicTypeChar8:
+        return True
+    if basic_type == eBasicTypeShort:
+        return True
+    if basic_type == eBasicTypeUnsignedShort:
+        return True
+    if basic_type == eBasicTypeInt:
+        return True
+    if basic_type == eBasicTypeUnsignedInt:
+        return True
+    if basic_type == eBasicTypeLong:
+        return True
+    if basic_type == eBasicTypeUnsignedLong:
+        return True
+    if basic_type == eBasicTypeLongLong:
+        return True
+    if basic_type == eBasicTypeUnsignedLongLong:
+        return True
+    if basic_type == eBasicTypeInt128:
+        return True
+    if basic_type == eBasicTypeUnsignedInt128:
+        return True
+    if basic_type == eBasicTypeBool:
+        return True
+
+    return False
+
+
+def get_enum_string(valobj: SBValue) -> str:
+    type: SBType = valobj.GetType()
+    enumMembers: SBTypeEnumMemberList = type.GetEnumMembers()
+    starting_value = valobj.GetValueAsUnsigned()
+    if enumMembers.IsValid() and enumMembers.GetSize() > 0:
+        member: SBTypeEnumMember
+        member_names: list[str] = []
+        member_values: list[int] = []
+        for member in enumMembers:
+            member_names.append(member.name)
+            member_values.append(member.unsigned)
+        if member_values.count(starting_value) == 0:
+            # this is probably a flag
+            flag_summary = ""
+            remaining_value = starting_value
+            for i, member_value in enumerate(member_values):
+                if member_value & remaining_value:
+                    if flag_summary != "":
+                        flag_summary += " | "
+                    flag_summary += member_names[i]
+                    # remove the flag from the start_value
+                    remaining_value &= ~member_value
+            if remaining_value != 0:
+                if remaining_value != starting_value:
+                    flag_summary += " | "
+                flag_summary += "0x" + format(remaining_value, "x")
+            # flag_summary += " (" + str(starting_value) + ")"
+            return flag_summary
+        else:
+            # get the index of the value
+            name = member_names[member_values.index(starting_value)]
+            return name  # + " (" + str(starting_value) + ")"
+    return "<Invalid Enum> (" + str(starting_value) + ")"
+
+
+def get_basic_printable_string(valobj: SBValue) -> str:
+    type: SBType = valobj.GetType()
+    if type.GetTypeClass() == eTypeClassEnumeration:
+        return get_enum_string(valobj)
+    # char_pointer_type: SBType = valobj.target.GetBasicType(eBasicTypeChar).GetPointerType()
+
+    basic_type = type.GetCanonicalType().GetBasicType()
+    if basic_type == eBasicTypeInvalid:
+        return INVALID_SUMMARY
+    if basic_type == eBasicTypeVoid:
+        return "<void>"
+    if basic_type == eBasicTypeObjCID:
+        return str(valobj.GetSummary())
+    if basic_type == eBasicTypeObjCClass:
+        return str(valobj.GetSummary())
+    if basic_type == eBasicTypeObjCSel:
+        return str(valobj.GetSummary())
+    if basic_type == eBasicTypeNullPtr:
+        return NULL_SUMMARY
+    if basic_type == eBasicTypeChar:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeSignedChar:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeUnsignedChar:
+        return str(valobj.GetValueAsUnsigned())
+    if basic_type == eBasicTypeWChar:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeSignedWChar:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeUnsignedWChar:
+        return str(valobj.GetValueAsUnsigned())
+    if basic_type == eBasicTypeChar16:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeChar32:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeChar8:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeShort:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeUnsignedShort:
+        return str(valobj.GetValueAsUnsigned())
+    if basic_type == eBasicTypeInt:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeUnsignedInt:
+        return str(valobj.GetValueAsUnsigned())
+    if basic_type == eBasicTypeLong:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeUnsignedLong:
+        return str(valobj.GetValueAsUnsigned())
+    if basic_type == eBasicTypeLongLong:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeUnsignedLongLong:
+        return str(valobj.GetValueAsUnsigned())
+    if basic_type == eBasicTypeInt128:
+        return str(valobj.GetValueAsSigned())
+    if basic_type == eBasicTypeUnsignedInt128:
+        return str(valobj.GetValueAsUnsigned())
+    if basic_type == eBasicTypeBool:
+        return str(valobj.GetValueAsUnsigned())
+    if basic_type == eBasicTypeHalf:
+        return GetFloatStr(valobj)
+    if basic_type == eBasicTypeFloat:
+        return GetFloatStr(valobj)
+    if basic_type == eBasicTypeDouble:
+        return GetFloatStr(valobj)
+    if basic_type == eBasicTypeLongDouble:
+        return GetFloatStr(valobj)
+    if basic_type == eBasicTypeFloatComplex:
+        return GetFloatStr(valobj)
+    if basic_type == eBasicTypeDoubleComplex:
+        return GetFloatStr(valobj)
+    if basic_type == eBasicTypeLongDoubleComplex:
+        return GetFloatStr(valobj)
+    return INVALID_SUMMARY
+
+
+def is_valid_pointer(ptr: SBValue) -> bool:
+    if not ptr:
+        print_trace("is_valid_pointer(): ptr is None")
+        return False
+    if not ptr.IsValid():
+        print_trace("is_valid_pointer(): ptr is not valid SBValue")
+        return False
+    if not ptr.GetType().IsPointerType():
+        print_trace("is_valid_pointer(): ptr is not a pointer")
+        return False
+    if ptr.GetValueAsUnsigned() == 0:
+        print_trace("is_valid_pointer(): ptr = nullptr")
+        return False
+    if not ptr.Dereference().IsValid():
+        print_trace("is_valid_pointer(): ptr dereference is not valid")
+        return False
+    return True
+
+
+def pointer_exists_and_is_null(ptr: SBValue) -> bool:
+    if ptr is None or not ptr.IsValid():
+        return False
+    if not ptr.GetType().IsPointerType():
+        return False
+    if ptr.GetValueAsUnsigned() == 0:
+        return True
+    return False
+
+
+def strip_quotes(val: str):
+    if val.startswith('U"'):
+        val = val.removeprefix('U"').removesuffix('"')
+    else:
+        val = val.removeprefix('"').removesuffix('"')
+    return val
+
+
+# Cowdata size is located at the cowdata address - 8 bytes (sizeof(uint64_t))
+def get_exception_trace(e: Exception, before_exception_limit=5, _this_call_depth=2) -> str:
+    stack_prefix = "Traceback (most recent call last):\n"
+    exception_trace = traceback.format_exception(type(e), e, e.__traceback__)
+    stack_trace_str = "".join(exception_trace[1:]).replace("\\n", "\n")
+    if before_exception_limit > 0:
+        before_exc_stack_trace = traceback.format_stack(limit=(before_exception_limit + 2))
+        stack_trace_str = (
+            "".join(before_exc_stack_trace[:-_this_call_depth]).replace("\\n", "\n") + "Handled:\n" + stack_trace_str
+        )
+    return stack_prefix + stack_trace_str
+
+
+def print_exception_trace(e: Exception, before_exception_limit=5) -> None:
+    print(get_exception_trace(e, before_exception_limit, 3))
+
+
+@print_trace_dec
+def get_offset_of_object_member(obj: SBValue, member: str) -> int:
+    if not obj.IsValid():
+        return -1
+    # check if obj is a pointer
+    if obj.GetType().IsPointerType():
+        obj = obj.Dereference()
+        if not obj.IsValid():
+            return -1
+    obj_addr: SBValue = obj.AddressOf()
+    element_addr_val = obj_addr.GetValueAsUnsigned()
+    member_val: SBValue = obj.GetChildMemberWithName(member)
+    member_addr: SBValue = member_val.AddressOf()
+    member_addr_val = member_addr.GetValueAsUnsigned()
+    return member_addr_val - element_addr_val  # type: ignore
+
+
+def not_null_check(valobj: SBValue) -> bool:
+    if not valobj or not valobj.IsValid():
+        return False
+    return True
+
+
+@print_trace_dec
+def get_synth_summary(synth_class, valobj: SBValue, dict):
+    obj = valobj
+    if valobj.IsSynthetic():
+        obj = valobj.GetNonSyntheticValue()
+    synth = synth_class(obj, dict, True)
+    summary = synth.get_summary()
+    return summary
+
+
+def ValCheck(val: SBValue) -> SBValue:
+    if not val:
+        raise Exception("SBValue is None")
+    error = val.GetError()
+    if error.Fail() or not val.IsValid():
+        fmt_err = f"{val.GetName()}: " if val.GetName() else ""
+        if error.Fail():
+            raise Exception(fmt_err + error.GetCString())
+        else:
+            raise Exception(fmt_err + "SBValue is not valid")
+    return val
+
+
+# ********************************************************
+# GODOT-SPECIFIC UTILITIES
+# ********************************************************
+
+
+NON_RECURSIVE = [
+    "String",
+    "Vector2",
+    "Vector2i",
+    "Rect2",
+    "Rect2i",
+    "Vector3",
+    "Vector3i",
+    "Transform2D",
+    "Vector4",
+    "Vector4i",
+    "Plane",
+    "Quaternion",
+    "AABB",
+    "Basis",
+    "Transform3D",
+    "Projection",
+    "Color",
+    "StringName",
+    "NodePath",
+    "RID",
+    # "Callable",
+    "Signal",
+    "ObjectID",
+]
+
+
+def get_valobj_name(valobj: SBValue) -> str:
+    fmt = "-{0}-"
+    if valobj is None or not hasattr(valobj, "GetName"):
+        return fmt.format("NULL")
+    elif not valobj.IsValid():
+        return "<INVALID>"
+    return fmt.format(valobj.GetName())
+
+
+@print_trace_dec
+def is_string_type(type: SBType):
+    if type is None:
+        return False
+    type_class = type.GetTypeClass()
+    if type_class == eTypeClassClass or type_class == eTypeClassPointer:
+        _class_type = type
+        if type_class == eTypeClassPointer:
+            _class_type = type.GetPointeeType()
+        type_name: str = _class_type.GetUnqualifiedType().GetDisplayTypeName()
+        if type_name == "String":
+            return True
+        elif type_name == "StringName":
+            return True
+        elif type_name == "StringBuffer":
+            return True
+        elif type_name == "NodePath":
+            return True
+    elif is_basic_string_type(type):
+        return True
+
+    return False
+
+
+@print_trace_dec
+def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
+    # global cow_err_str
+    size = 0
+    if not _cowdata or not _cowdata.IsValid():
+        print_trace("COWDATASIZE Invalid: _cowdata is not valid")
+        stack_fmt = traceback.format_stack()
+        print_trace("".join(stack_fmt[:-1]).replace("\\n", "\n"))
+        return None
+    try:
+        _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
+        if null_means_zero and pointer_exists_and_is_null(_ptr):
+            return 0
+        if not is_valid_pointer(_ptr):
+            print_trace("COWDATASIZE Invalid: _ptr is not valid")
+            return None
+        _cowdata_template_type: SBType = _cowdata.GetType().GetTemplateArgumentType(0)
+        if not _cowdata_template_type.IsValid():
+            print_trace("COWDATASIZE Invalid: _cowdata template type is not valid")
+            return None
+        uint64_type: SBType = _cowdata.GetTarget().GetBasicType(eBasicTypeUnsignedLongLong)
+        ptr_addr_val = _ptr.GetValueAsUnsigned()
+        if ptr_addr_val - 8 < 0:
+            print_trace("COWDATASIZE Invalid: ptr_addr_val - 8 is less than 0: " + str(ptr_addr_val))
+            return None
+        size_child: SBValue = _ptr.CreateValueFromAddress("size", ptr_addr_val - 8, uint64_type)
+        if not size_child.IsValid():
+            print_trace("COWDATASIZE Invalid: Size value at ptr_addr - 8 is not valid")
+            return None
+        size = size_child.GetValueAsSigned()
+        if size < 0:
+            print_trace("COWDATASIZE Invalid: Size is less than 0: " + str(size))
+            return None
+        if size > 0:
+            item_size = _ptr.GetType().GetByteSize()
+            last_val = _ptr.CreateValueFromAddress(
+                "_tmp_tail",
+                ptr_addr_val + ((size - 1) * item_size),
+                _ptr.GetType().GetPointeeType(),
+            )
+            if not last_val.IsValid():
+                print_trace("COWDATASIZE Invalid: Last value is not valid: " + str(last_val))
+                return None
+    except Exception as e:
+        print_verbose("COWDATASIZE Exception: " + str(e))
+        print_trace(get_exception_trace(e))
+        return None
+
+    return size
+
+
+def is_cowdata_valid(_cowdata: SBValue) -> bool:
+    size = _get_cowdata_size(_cowdata)
+    if size is None:
+        return False
+    return True
+
+
+def get_cowdata_size(_cowdata: SBValue) -> int:
+    size = _get_cowdata_size(_cowdata)
+    if size is None:
+        return 0
+    return size
+
+
+# ********************************************************
+# SUMMARY PROVIDERS
+# ********************************************************
+class VariantType(Enum):
+    NIL = 0
+    BOOL = 1
+    INT = 2
+    FLOAT = 3
+    STRING = 4
+    VECTOR2 = 5
+    VECTOR2I = 6
+    RECT2 = 7
+    RECT2I = 8
+    VECTOR3 = 9
+    VECTOR3I = 10
+    TRANSFORM2D = 11
+    VECTOR4 = 12
+    VECTOR4I = 13
+    PLANE = 14
+    QUATERNION = 15
+    AABB = 16
+    BASIS = 17
+    TRANSFORM3D = 18
+    PROJECTION = 19
+    COLOR = 20
+    STRING_NAME = 21
+    NODE_PATH = 22
+    RID = 23
+    OBJECT = 24
+    CALLABLE = 25
+    SIGNAL = 26
+    DICTIONARY = 27
+    ARRAY = 28
+    PACKED_BYTE_ARRAY = 29
+    PACKED_INT32_ARRAY = 30
+    PACKED_INT64_ARRAY = 31
+    PACKED_FLOAT32_ARRAY = 32
+    PACKED_FLOAT64_ARRAY = 33
+    PACKED_STRING_ARRAY = 34
+    PACKED_VECTOR2_ARRAY = 35
+    PACKED_VECTOR3_ARRAY = 36
+    PACKED_COLOR_ARRAY = 37
+    VARIANT_MAX = 38
 
 
 @print_trace_dec
@@ -582,28 +1033,6 @@ class _SBSyntheticValueProviderWithSummary(SBSyntheticValueProvider):
         raise Exception("Not implemented")
 
 
-import json
-
-
-def get_valobj_name(valobj: SBValue) -> str:
-    fmt = "-{0}-"
-    if valobj is None or not hasattr(valobj, "GetName"):
-        return fmt.format("NULL")
-    elif not valobj.IsValid():
-        return "<INVALID>"
-    return fmt.format(valobj.GetName())
-
-
-@print_trace_dec
-def get_synth_summary(synth_class, valobj: SBValue, dict):
-    obj = valobj
-    if valobj.IsSynthetic():
-        obj = valobj.GetNonSyntheticValue()
-    synth = synth_class(obj, dict, True)
-    summary = synth.get_summary()
-    return summary
-
-
 class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
     synth_by_id: weakref.WeakValueDictionary[
         int, _SBSyntheticValueProviderWithSummary
@@ -656,6 +1085,13 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
     def check_valid(self, obj: SBValue) -> bool:
         print("check_valid not implemented")
         return False
+
+
+def get_synth_provider_for_object(cls, valobj: SBValue, internal_dict, is_summary) -> GodotSynthProvider:
+    obj_id = valobj.GetIndexOfChildWithName("$$object-id$$")
+    if obj_id in GodotSynthProvider.synth_by_id:
+        return GodotSynthProvider.synth_by_id[obj_id]
+    return cls(valobj.GetNonSyntheticValue(), internal_dict, is_summary)  # type: ignore
 
 
 class Variant_SyntheticProvider(GodotSynthProvider):
@@ -747,14 +1183,6 @@ def StringName_SummaryProvider(valobj: SBValue, internal_dict):
 
 def Ref_SummaryProvider(valobj: SBValue, internal_dict):
     return GenericShortSummary(valobj, internal_dict)
-
-
-def strip_quotes(val: str):
-    if val.startswith('U"'):
-        val = val.removeprefix('U"').removesuffix('"')
-    else:
-        val = val.removeprefix('"').removesuffix('"')
-    return val
 
 
 def NodePath_SummaryProvider(valobj: SBValue, internal_dict):
@@ -932,19 +1360,6 @@ def Rect2i_SummaryProvider(valobj: SBValue, internal_dict):
         .GetChildMemberWithName("y")
         .GetValueAsSigned(),
     )
-
-
-def ValCheck(val: SBValue) -> SBValue:
-    if not val:
-        raise Exception("SBValue is None")
-    error = val.GetError()
-    if error.Fail() or not val.IsValid():
-        fmt_err = f"{val.GetName()}: " if val.GetName() else ""
-        if error.Fail():
-            raise Exception(fmt_err + error.GetCString())
-        else:
-            raise Exception(fmt_err + "SBValue is not valid")
-    return val
 
 
 def ConstructNamedColorTable(global_named_colors_table: SBValue) -> dict[str, str]:
@@ -1169,380 +1584,6 @@ def CharString_SummaryProvider(valobj: SBValue, internal_dict):
     return '"{0}"'.format(starr)
 
 
-def is_basic_printable_type(type: SBType):
-    if type.GetTypeClass() == eTypeClassEnumeration:
-        return True
-
-    basic_type = type.GetCanonicalType().GetBasicType()
-    if basic_type == eBasicTypeVoid:
-        return False
-    if basic_type == eBasicTypeInvalid:
-        return False
-    if basic_type == eBasicTypeObjCID:
-        return False
-    if basic_type == eBasicTypeObjCClass:
-        return False
-    if basic_type == eBasicTypeObjCSel:
-        return False
-    return True
-
-
-NON_RECURSIVE = [
-    "String",
-    "Vector2",
-    "Vector2i",
-    "Rect2",
-    "Rect2i",
-    "Vector3",
-    "Vector3i",
-    "Transform2D",
-    "Vector4",
-    "Vector4i",
-    "Plane",
-    "Quaternion",
-    "AABB",
-    "Basis",
-    "Transform3D",
-    "Projection",
-    "Color",
-    "StringName",
-    "NodePath",
-    "RID",
-    # "Callable",
-    "Signal",
-    "ObjectID",
-]
-
-
-def is_basic_string_type(type: SBType):
-    # check to see if it's a const char*, const wchar_t*, const char16_t*, const char32_t*
-    if not type.IsPointerType():
-        return False
-    if not "const" in type.name:
-        return False
-    basic_type = type.GetCanonicalType().GetBasicType()
-    if basic_type == eBasicTypeChar:
-        return True
-    if basic_type == eBasicTypeWChar:
-        return True
-    if basic_type == eBasicTypeChar16:
-        return True
-    if basic_type == eBasicTypeChar32:
-        return True
-    return False
-
-
-@print_trace_dec
-def is_string_type(type: SBType):
-    if type is None:
-        return False
-    type_class = type.GetTypeClass()
-    if type_class == eTypeClassClass or type_class == eTypeClassPointer:
-        _class_type = type
-        if type_class == eTypeClassPointer:
-            _class_type = type.GetPointeeType()
-        type_name: str = _class_type.GetUnqualifiedType().GetDisplayTypeName()
-        if type_name == "String":
-            return True
-        elif type_name == "StringName":
-            return True
-        elif type_name == "StringBuffer":
-            return True
-        elif type_name == "NodePath":
-            return True
-    elif is_basic_string_type(type):
-        return True
-
-    return False
-
-
-def is_basic_integer_type(type: SBType):
-    if type is None:
-        return False
-    if type.GetTypeClass() == eTypeClassEnumeration:
-        return True
-    basic_type = type.GetCanonicalType().GetBasicType()
-    if basic_type == eBasicTypeChar:
-        return True
-    if basic_type == eBasicTypeSignedChar:
-        return True
-    if basic_type == eBasicTypeUnsignedChar:
-        return True
-    if basic_type == eBasicTypeWChar:
-        return True
-    if basic_type == eBasicTypeSignedWChar:
-        return True
-    if basic_type == eBasicTypeUnsignedWChar:
-        return True
-    if basic_type == eBasicTypeChar16:
-        return True
-    if basic_type == eBasicTypeChar32:
-        return True
-    if basic_type == eBasicTypeChar8:
-        return True
-    if basic_type == eBasicTypeShort:
-        return True
-    if basic_type == eBasicTypeUnsignedShort:
-        return True
-    if basic_type == eBasicTypeInt:
-        return True
-    if basic_type == eBasicTypeUnsignedInt:
-        return True
-    if basic_type == eBasicTypeLong:
-        return True
-    if basic_type == eBasicTypeUnsignedLong:
-        return True
-    if basic_type == eBasicTypeLongLong:
-        return True
-    if basic_type == eBasicTypeUnsignedLongLong:
-        return True
-    if basic_type == eBasicTypeInt128:
-        return True
-    if basic_type == eBasicTypeUnsignedInt128:
-        return True
-    if basic_type == eBasicTypeBool:
-        return True
-
-    return False
-
-
-def get_enum_string(valobj: SBValue) -> str:
-    type: SBType = valobj.GetType()
-    enumMembers: SBTypeEnumMemberList = type.GetEnumMembers()
-    starting_value = valobj.GetValueAsUnsigned()
-    if enumMembers.IsValid() and enumMembers.GetSize() > 0:
-        member: SBTypeEnumMember
-        member_names: list[str] = []
-        member_values: list[int] = []
-        for member in enumMembers:
-            member_names.append(member.name)
-            member_values.append(member.unsigned)
-        if member_values.count(starting_value) == 0:
-            # this is probably a flag
-            flag_summary = ""
-            remaining_value = starting_value
-            for i, member_value in enumerate(member_values):
-                if member_value & remaining_value:
-                    if flag_summary != "":
-                        flag_summary += " | "
-                    flag_summary += member_names[i]
-                    # remove the flag from the start_value
-                    remaining_value &= ~member_value
-            if remaining_value != 0:
-                if remaining_value != starting_value:
-                    flag_summary += " | "
-                flag_summary += "0x" + format(remaining_value, "x")
-            # flag_summary += " (" + str(starting_value) + ")"
-            return flag_summary
-        else:
-            # get the index of the value
-            name = member_names[member_values.index(starting_value)]
-            return name  # + " (" + str(starting_value) + ")"
-    return "<Invalid Enum> (" + str(starting_value) + ")"
-
-
-def get_basic_printable_string(valobj: SBValue) -> str:
-    type: SBType = valobj.GetType()
-    if type.GetTypeClass() == eTypeClassEnumeration:
-        return get_enum_string(valobj)
-    # char_pointer_type: SBType = valobj.target.GetBasicType(eBasicTypeChar).GetPointerType()
-
-    basic_type = type.GetCanonicalType().GetBasicType()
-    if basic_type == eBasicTypeInvalid:
-        return INVALID_SUMMARY
-    if basic_type == eBasicTypeVoid:
-        return "<void>"
-    if basic_type == eBasicTypeObjCID:
-        return str(valobj.GetSummary())
-    if basic_type == eBasicTypeObjCClass:
-        return str(valobj.GetSummary())
-    if basic_type == eBasicTypeObjCSel:
-        return str(valobj.GetSummary())
-    if basic_type == eBasicTypeNullPtr:
-        return NULL_SUMMARY
-    if basic_type == eBasicTypeChar:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeSignedChar:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedChar:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeWChar:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeSignedWChar:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedWChar:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeChar16:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeChar32:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeChar8:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeShort:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedShort:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeInt:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedInt:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeLong:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedLong:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeLongLong:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedLongLong:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeInt128:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedInt128:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeBool:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeHalf:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeFloat:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeDouble:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeLongDouble:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeFloatComplex:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeDoubleComplex:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeLongDoubleComplex:
-        return GetFloatStr(valobj)
-    return INVALID_SUMMARY
-
-
-def is_valid_pointer(ptr: SBValue) -> bool:
-    if not ptr:
-        print_trace("is_valid_pointer(): ptr is None")
-        return False
-    if not ptr.IsValid():
-        print_trace("is_valid_pointer(): ptr is not valid SBValue")
-        return False
-    if not ptr.GetType().IsPointerType():
-        print_trace("is_valid_pointer(): ptr is not a pointer")
-        return False
-    if ptr.GetValueAsUnsigned() == 0:
-        print_trace("is_valid_pointer(): ptr = nullptr")
-        return False
-    if not ptr.Dereference().IsValid():
-        print_trace("is_valid_pointer(): ptr dereference is not valid")
-        return False
-    return True
-
-
-def pointer_exists_and_is_null(ptr: SBValue) -> bool:
-    if ptr is None or not ptr.IsValid():
-        return False
-    if not ptr.GetType().IsPointerType():
-        return False
-    if ptr.GetValueAsUnsigned() == 0:
-        return True
-    return False
-
-
-# Cowdata size is located at the cowdata address - 8 bytes (sizeof(uint64_t))
-def get_exception_trace(
-    e: Exception, before_exception_limit=5, _this_call_depth=2
-) -> str:
-    stack_prefix = "Traceback (most recent call last):\n"
-    exception_trace = traceback.format_exception(type(e), e, e.__traceback__)
-    stack_trace_str = "".join(exception_trace[1:]).replace("\\n", "\n")
-    if before_exception_limit > 0:
-        before_exc_stack_trace = traceback.format_stack(
-            limit=(before_exception_limit + 2)
-        )
-        stack_trace_str = (
-            "".join(before_exc_stack_trace[:-_this_call_depth]).replace("\\n", "\n")
-            + "Handled:\n"
-            + stack_trace_str
-        )
-    return stack_prefix + stack_trace_str
-
-
-def print_exception_trace(e: Exception, before_exception_limit=5) -> None:
-    print(get_exception_trace(e, before_exception_limit, 3))
-
-
-@print_trace_dec
-def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
-    # global cow_err_str
-    size = 0
-    if not _cowdata or not _cowdata.IsValid():
-        print_trace("COWDATASIZE Invalid: _cowdata is not valid")
-        stack_fmt = traceback.format_stack()
-        print_trace("".join(stack_fmt[:-1]).replace("\\n", "\n"))
-        return None
-    try:
-        _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
-        if null_means_zero and pointer_exists_and_is_null(_ptr):
-            return 0
-        if not is_valid_pointer(_ptr):
-            print_trace("COWDATASIZE Invalid: _ptr is not valid")
-            return None
-        _cowdata_template_type: SBType = _cowdata.GetType().GetTemplateArgumentType(0)
-        if not _cowdata_template_type.IsValid():
-            print_trace("COWDATASIZE Invalid: _cowdata template type is not valid")
-            return None
-        uint64_type: SBType = _cowdata.GetTarget().GetBasicType(
-            eBasicTypeUnsignedLongLong
-        )
-        ptr_addr_val = _ptr.GetValueAsUnsigned()
-        if ptr_addr_val - 8 < 0:
-            print_trace(
-                "COWDATASIZE Invalid: ptr_addr_val - 8 is less than 0: "
-                + str(ptr_addr_val)
-            )
-            return None
-        size_child: SBValue = _ptr.CreateValueFromAddress(
-            "size", ptr_addr_val - 8, uint64_type
-        )
-        if not size_child.IsValid():
-            print_trace("COWDATASIZE Invalid: Size value at ptr_addr - 8 is not valid")
-            return None
-        size = size_child.GetValueAsSigned()
-        if size < 0:
-            print_trace("COWDATASIZE Invalid: Size is less than 0: " + str(size))
-            return None
-        if size > 0:
-            item_size = _ptr.GetType().GetByteSize()
-            last_val = _ptr.CreateValueFromAddress(
-                "_tmp_tail",
-                ptr_addr_val + ((size - 1) * item_size),
-                _ptr.GetType().GetPointeeType(),
-            )
-            if not last_val.IsValid():
-                print_trace(
-                    "COWDATASIZE Invalid: Last value is not valid: " + str(last_val)
-                )
-                return None
-    except Exception as e:
-        print_verbose("COWDATASIZE Exception: " + str(e))
-        print_trace(get_exception_trace(e))
-        return None
-
-    return size
-
-
-def is_cowdata_valid(_cowdata: SBValue) -> bool:
-    size = _get_cowdata_size(_cowdata)
-    if size is None:
-        return False
-    return True
-
-
-def get_cowdata_size(_cowdata: SBValue) -> int:
-    size = _get_cowdata_size(_cowdata)
-    if size is None:
-        return 0
-    return size
-
-
 @print_trace_dec
 def GenericShortSummary(
     valobj: SBValue,
@@ -1656,23 +1697,6 @@ def GenericShortSummary(
         summ_str += " !!EXCEPTION: " + str(e)
         summ_str += " " + str(valobj.GetDisplayTypeName())
     return summ_str
-
-
-@print_trace_dec
-def get_offset_of_object_member(obj: SBValue, member: str) -> int:
-    if not obj.IsValid():
-        return -1
-    # check if obj is a pointer
-    if obj.GetType().IsPointerType():
-        obj = obj.Dereference()
-        if not obj.IsValid():
-            return -1
-    obj_addr: SBValue = obj.AddressOf()
-    element_addr_val = obj_addr.GetValueAsUnsigned()
-    member_val: SBValue = obj.GetChildMemberWithName(member)
-    member_addr: SBValue = member_val.AddressOf()
-    member_addr_val = member_addr.GetValueAsUnsigned()
-    return member_addr_val - element_addr_val  # type: ignore
 
 
 def key_value_summary(valobj: SBValue, internal_dict, key_val_style):
@@ -2145,18 +2169,6 @@ def VMap_Pair_SummaryProvider(valobj: SBValue, internal_dict):
     return fmt_str.format(*_VMap_Pair_get_keypair_summaries(valobj, internal_dict))
 
 
-@print_trace_dec
-def should_use_key_val_style(key_template_type) -> bool:
-    return (
-        Opts.MAP_KEY_VAL_STYLE
-        and key_template_type is not None
-        and (
-            is_string_type(key_template_type)
-            or is_basic_integer_type(key_template_type)
-        )
-    )
-
-
 class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
     key_val_element_style: bool = Opts.MAP_KEY_VAL_STYLE
 
@@ -2427,12 +2439,6 @@ class List_SyntheticProvider(_LinkedListLike_SyntheticProvider):
         return element.CreateChildAtOffset(
             "[{0}]".format(str(index)), offset, value.GetType()
         )
-
-
-def not_null_check(valobj: SBValue) -> bool:
-    if not valobj or not valobj.IsValid():
-        return False
-    return True
 
 
 class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
@@ -2712,15 +2718,6 @@ class _Proxy_SyntheticProvider(GodotSynthProvider):
         return None
 
 
-def get_synth_provider_for_object(
-    cls, valobj: SBValue, internal_dict, is_summary
-) -> GodotSynthProvider:
-    obj_id = valobj.GetIndexOfChildWithName("$$object-id$$")
-    if obj_id in GodotSynthProvider.synth_by_id:
-        return GodotSynthProvider.synth_by_id[obj_id]
-    return cls(valobj.GetNonSyntheticValue(), internal_dict, is_summary)  # type: ignore
-
-
 # just a proxy for Vector_SyntheticProvider
 class Array_SyntheticProvider(_Proxy_SyntheticProvider):
     def update(self):
@@ -2839,6 +2836,10 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
             return self.synth_proxy.get_child_at_index(index - 2)
         return None
 
+
+# ********************************************************
+# REGISTRATION
+# ********************************************************
 
 IDRE = "([^,]+)"
 
@@ -3036,6 +3037,11 @@ def __lldb_init_module(debugger: SBDebugger, dict):
     SetOptsCommand.register_lldb_command(debugger, __name__, "godot-formatter")
     GetOptsCommand.register_lldb_command(debugger, __name__, "godot-formatter")
     ReloadCommand.register_lldb_command(debugger, __name__, "godot-formatter")
+
+
+# ********************************************************
+# COMMANDS
+# ********************************************************
 
 
 class _LLDBCommandBase:
