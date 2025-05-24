@@ -13,6 +13,8 @@ import optparse
 import re
 import json
 
+from enum import Enum
+import weakref
 from types import TracebackType
 from typing import final, Optional
 
@@ -25,719 +27,21 @@ from lldb import (SBCommandReturnObject, SBExecutionContext, SBTypeCategory, eFo
                   eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer, eTypeOptionCascade)
 from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger, SBTypeSummary, SBTypeSynthetic, SBTypeNameSpecifier)
 # fmt: on
-from enum import Enum
-import weakref
+
+from importlib import reload
+
+import godot_formatters.utils
+
+reload(godot_formatters.utils)
+from godot_formatters.utils import *
+
+import godot_formatters.options
+
+reload(godot_formatters.options)
+from godot_formatters.options import *
 
 UINT32_MAX = 4294967295
 INT32_MAX = 2147483647
-
-# ********************************************************
-# OPTIONS
-# ********************************************************
-
-
-class GodotFormatterOptions:
-    PRINT_VERBOSE = False
-    PRINT_TRACE = False
-    SUMMARY_STRING_MAX_LENGTH = 100
-    MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY = 6
-    NAMED_COLOR_ANNOTATION = True
-    MAP_KEY_VAL_STYLE = False
-    SANITIZE_STRING_SUMMARY = True
-    MIDEBUGGER_COMPAT = False
-    FILTER = ""  #'"' + '" , "'.join([".*update.*", ".*__init__.*"]) + '"'
-
-
-def get_filter():
-    if not Opts.FILTER:
-        return []
-    thing = [s.strip('"') for s in shlex.split(Opts.FILTER) if s != ","]
-    return thing
-
-
-HELP_STRING_MAP = {
-    "PRINT_VERBOSE": "Print verbose output",
-    "PRINT_TRACE": "Print trace output",
-    "SUMMARY_STRING_MAX_LENGTH": "Maximum length of a summary string",
-    "MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY": "Maximum amount of children to display in a summary string",
-    "NAMED_COLOR_ANNOTATION": "Annotate color summaries with their named color if applicable",
-    "MAP_KEY_VAL_STYLE": 'Display children in Map-like templates in a key-value list style (e.g. ["key"] = "value").\nIf false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")',
-    "SANITIZE_STRING_SUMMARY": "Sanitize string summaries to escape all formatting characters and quotes",
-    "MIDEBUGGER_COMPAT": "Force compatibility settings with the MIDebugger interface (i.e. the official MS C++ vscode debugger `cppdbg`).\nThis is not necessary if using a native LLDB interface (e.g. `codelldb` debugger extension for vscode)",
-    "FILTER": "List of regex filters to apply to trace output",
-}
-
-# Compatibility settings
-def force_compat(force_mi_compat: bool):
-    if force_mi_compat:
-        # MIDebugger refuses to display map children when this is True, forced to False
-        Opts.MAP_KEY_VAL_STYLE = False
-        # MIDebugger chokes and dies when there are mixed escaped and non-escaped quotes in a string summary, so this is forced to be True
-        Opts.SANITIZE_STRING_SUMMARY = True
-
-
-Opts: GodotFormatterOptions = GodotFormatterOptions()
-
-# Summary string formats
-NULL_SUMMARY = "<null>"
-NIL_SUMMARY = "<nil>"  # Variant nil
-EMPTY_SUMMARY = "<empty>"  # Empty string, nodepath, etc.
-INVALID_SUMMARY = "<invalid>"  # Invalid pointer, uninitialized objects, etc.
-LIST_FORMAT = "{type_no_template}[{size}]{{{children}}}"
-
-# Synthetic list-like configs; because linked-lists need to traverse the list to get a specific element, we need to cache the members to be performant.
-NO_CACHE_MEMBERS = False
-CACHE_MIN = 500
-CACHE_FETCH_MAX = 5000
-
-STRINGS_STILL_32_BIT = True  # if true, strings are still 32-bit
-MAX_DEPTH = 3
-
-
-def print_verbose(val: str):
-    if Opts.PRINT_VERBOSE or Opts.PRINT_TRACE:
-        print(val)
-
-
-def print_trace(val: str, *args, **kwargs):
-    if Opts.PRINT_TRACE:
-        # curr_time = datetime.datetime.now().strftime("%H:%M:%S.%f")
-        # format = f"[{curr_time}] {val}"
-        print(val, *args, **kwargs)
-
-
-# ********************************************************
-# DEBUG TRACING
-# ********************************************************
-
-
-def self_none_if_invalid(func):
-    def wrapper(*args, **kwargs):
-        if not not_null_check(args[1]):
-            return None
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-def self_zero_if_invalid(func):
-    def wrapper(*args, **kwargs):
-        if not not_null_check(args[1]):
-            return 0
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-def get_start_tr_format(func_name: str):
-    global level
-    return ("  " * level) + func_name + " {"
-
-
-def get_end_tr_format(func_name: str):
-    global level
-    return ("  " * level) + "} // " + func_name
-
-
-def get_func_name(func, args):
-    return str(func.__qualname__)
-
-
-def get_arg_str(arg):
-    # check if this can be turned into a string
-    ret = "<unknown>"
-    if arg is None:
-        return "None"
-    if hasattr(arg, "GetName") or isinstance(arg, SBValue) or isinstance(arg, SBType):
-        return get_valobj_name(arg)
-    if isinstance(arg, str) or hasattr(arg, "__str__"):
-        ret = str(arg)
-        if not (ret.startswith("<") and ret.endswith(">") and "object at" in ret):
-            return ret
-        else:
-            ret = ret.split(" ")[0] + ">"
-    if hasattr(arg, "__class__"):
-        return "<" + arg.__class__.__name__ + ">"
-    return ret
-
-
-def _mk_func_call(func, *args, **kwargs):
-    if len(args) == 1 and len(kwargs) == 0:
-        return func(args[0])
-    return func(*args, **kwargs)
-
-
-def mk_func_call(func, *args, **kwargs):
-    try:
-        return func(*args, **kwargs)
-    except Exception as e:
-        print(f"Error calling {func.__name__}")
-        print(f"Args length: {len(args)}")
-        print(f"kwargs length: {len(kwargs)}")
-        is_method = "." in func.__qualname__
-
-        def sanitize(i, arg):
-            if i == 0 and is_method:
-                return "self"
-            elif isinstance(arg, dict):
-                return "<dict>"
-            return arg
-
-        args_str = ", ".join(
-            [get_arg_str(sanitize(i, arg)) for i, arg in enumerate(args)]
-        )
-        print(f"Args: {args_str}")
-        kwargs_str = ", ".join(
-            [f"{key}={get_arg_str(val)}" for key, val in kwargs.items()]
-        )
-        print(f"Kwargs: {kwargs_str}")
-        print(str(e))
-        traceback.print_exc()
-        sleep(2)
-        return None
-
-
-level = 0
-
-
-def trace_func_call(func, *args, **kwargs):
-    global level
-    func_name = str(func.__qualname__)
-    is_method = "." in func_name
-    filters = get_filter()
-    # filters = []
-    matched = len(filters) == 0
-    for filter in get_filter():
-        regex = re.compile(filter)
-        if regex.match(func_name):
-            matched = True
-            break
-    if not matched:
-        return _mk_func_call(func, *args, **kwargs)
-    func_name = (
-        func_name.replace("SynthProvider", "SP")
-        .replace("SummaryProvider", "SumProv")
-        .replace("SyntheticProvider", "SP")
-    )
-    if (
-        len(args) > 0
-        and isinstance(args[0], GodotSynthProvider)
-        and hasattr(args[0], "valobj")
-    ):
-        func_name += f"<{get_valobj_name(args[0].valobj)}>"
-
-    def sanitize(i, arg):
-        if i == 0 and is_method:
-            return "self"
-        elif isinstance(arg, dict):
-            return "<dict>"
-        return arg
-
-    args_str = ", ".join([get_arg_str(sanitize(i, arg)) for i, arg in enumerate(args)])
-    args_str += ", ".join([f"{key}={get_arg_str(val)}" for key, val in kwargs.items()])
-    print_trace(get_start_tr_format(f"{func_name}({args_str})"))
-    level += 1
-    ret = mk_func_call(func, *args, **kwargs)
-    level -= 1
-    ret_str = get_arg_str(ret)
-    print_trace(get_end_tr_format(func_name) + f" -> {ret_str}")
-    return ret
-
-
-def get_gsp_print_str(func_name: str, args):
-    if len(args) > 0 and isinstance(args[0], GodotSynthProvider):
-        valobj = None
-        if hasattr(args[0], "valobj"):
-            valobj = args[0].valobj
-        return get_start_tr_format(func_name) + f" on {get_valobj_name(valobj)}"
-    return get_start_tr_format(func_name)
-
-
-def print_trace_dec(func):
-    def _pr_trace_wrap(*args, **kwargs):
-        return trace_func_call(func, *args, **kwargs)
-
-    if not Opts.PRINT_TRACE:
-        return func
-    _pr_trace_wrap.__name__ = func.__name__
-    _pr_trace_wrap.__qualname__ = func.__qualname__
-    return _pr_trace_wrap
-
-
-def trace_none_if_invalid_dec(func):
-    def wrapper(*args, **kwargs):
-        if not not_null_check(args[1]):
-            func_name = get_func_name(func, args)
-            print_trace(get_gsp_print_str(func_name, args))
-            print_trace(
-                get_end_tr_format(func_name) + ": Aborting due to invalid args[1]"
-            )
-            return None
-        return trace_func_call(func, *args, **kwargs)
-
-    if not Opts.PRINT_TRACE:
-        return self_none_if_invalid(func)
-    wrapper.__name__ = func.__name__
-    wrapper.__qualname__ = func.__qualname__
-    return wrapper
-
-
-# ********************************************************
-# UTILITIES
-# ********************************************************
-
-
-@print_trace_dec
-def should_use_key_val_style(key_template_type) -> bool:
-    return (
-        Opts.MAP_KEY_VAL_STYLE
-        and key_template_type is not None
-        and (is_string_type(key_template_type) or is_basic_integer_type(key_template_type))
-    )
-
-
-def GetFloat(valobj: SBValue) -> float:
-    dataArg: SBData = valobj.GetData()
-    if valobj.GetByteSize() > 4:
-        # real_t is a double
-        return dataArg.GetDouble(SBError(), 0)  # type: ignore
-    else:
-        # real_t is a float
-        return dataArg.GetFloat(SBError(), 0)  # type: ignore
-
-
-def GetFloatStr(valobj: SBValue, short: bool = False) -> str:
-    val = GetFloat(valobj)
-    if short:
-        return "{:.3f}".format(val)
-    return str(val)
-
-
-def is_basic_printable_type(type: SBType):
-    if type.GetTypeClass() == eTypeClassEnumeration:
-        return True
-
-    basic_type = type.GetCanonicalType().GetBasicType()
-    if basic_type == eBasicTypeVoid:
-        return False
-    if basic_type == eBasicTypeInvalid:
-        return False
-    if basic_type == eBasicTypeObjCID:
-        return False
-    if basic_type == eBasicTypeObjCClass:
-        return False
-    if basic_type == eBasicTypeObjCSel:
-        return False
-    return True
-
-
-def is_basic_string_type(type: SBType):
-    # check to see if it's a const char*, const wchar_t*, const char16_t*, const char32_t*
-    if not type.IsPointerType():
-        return False
-    if not "const" in type.name:
-        return False
-    basic_type = type.GetCanonicalType().GetBasicType()
-    if basic_type == eBasicTypeChar:
-        return True
-    if basic_type == eBasicTypeWChar:
-        return True
-    if basic_type == eBasicTypeChar16:
-        return True
-    if basic_type == eBasicTypeChar32:
-        return True
-    return False
-
-
-def is_basic_integer_type(type: SBType):
-    if type is None:
-        return False
-    if type.GetTypeClass() == eTypeClassEnumeration:
-        return True
-    basic_type = type.GetCanonicalType().GetBasicType()
-    if basic_type == eBasicTypeChar:
-        return True
-    if basic_type == eBasicTypeSignedChar:
-        return True
-    if basic_type == eBasicTypeUnsignedChar:
-        return True
-    if basic_type == eBasicTypeWChar:
-        return True
-    if basic_type == eBasicTypeSignedWChar:
-        return True
-    if basic_type == eBasicTypeUnsignedWChar:
-        return True
-    if basic_type == eBasicTypeChar16:
-        return True
-    if basic_type == eBasicTypeChar32:
-        return True
-    if basic_type == eBasicTypeChar8:
-        return True
-    if basic_type == eBasicTypeShort:
-        return True
-    if basic_type == eBasicTypeUnsignedShort:
-        return True
-    if basic_type == eBasicTypeInt:
-        return True
-    if basic_type == eBasicTypeUnsignedInt:
-        return True
-    if basic_type == eBasicTypeLong:
-        return True
-    if basic_type == eBasicTypeUnsignedLong:
-        return True
-    if basic_type == eBasicTypeLongLong:
-        return True
-    if basic_type == eBasicTypeUnsignedLongLong:
-        return True
-    if basic_type == eBasicTypeInt128:
-        return True
-    if basic_type == eBasicTypeUnsignedInt128:
-        return True
-    if basic_type == eBasicTypeBool:
-        return True
-
-    return False
-
-
-def get_enum_string(valobj: SBValue) -> str:
-    type: SBType = valobj.GetType()
-    enumMembers: SBTypeEnumMemberList = type.GetEnumMembers()
-    starting_value = valobj.GetValueAsUnsigned()
-    if enumMembers.IsValid() and enumMembers.GetSize() > 0:
-        member: SBTypeEnumMember
-        member_names: list[str] = []
-        member_values: list[int] = []
-        for member in enumMembers:
-            member_names.append(member.name)
-            member_values.append(member.unsigned)
-        if member_values.count(starting_value) == 0:
-            # this is probably a flag
-            flag_summary = ""
-            remaining_value = starting_value
-            for i, member_value in enumerate(member_values):
-                if member_value & remaining_value:
-                    if flag_summary != "":
-                        flag_summary += " | "
-                    flag_summary += member_names[i]
-                    # remove the flag from the start_value
-                    remaining_value &= ~member_value
-            if remaining_value != 0:
-                if remaining_value != starting_value:
-                    flag_summary += " | "
-                flag_summary += "0x" + format(remaining_value, "x")
-            # flag_summary += " (" + str(starting_value) + ")"
-            return flag_summary
-        else:
-            # get the index of the value
-            name = member_names[member_values.index(starting_value)]
-            return name  # + " (" + str(starting_value) + ")"
-    return "<Invalid Enum> (" + str(starting_value) + ")"
-
-
-def get_basic_printable_string(valobj: SBValue) -> str:
-    type: SBType = valobj.GetType()
-    if type.GetTypeClass() == eTypeClassEnumeration:
-        return get_enum_string(valobj)
-    # char_pointer_type: SBType = valobj.target.GetBasicType(eBasicTypeChar).GetPointerType()
-
-    basic_type = type.GetCanonicalType().GetBasicType()
-    if basic_type == eBasicTypeInvalid:
-        return INVALID_SUMMARY
-    if basic_type == eBasicTypeVoid:
-        return "<void>"
-    if basic_type == eBasicTypeObjCID:
-        return str(valobj.GetSummary())
-    if basic_type == eBasicTypeObjCClass:
-        return str(valobj.GetSummary())
-    if basic_type == eBasicTypeObjCSel:
-        return str(valobj.GetSummary())
-    if basic_type == eBasicTypeNullPtr:
-        return NULL_SUMMARY
-    if basic_type == eBasicTypeChar:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeSignedChar:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedChar:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeWChar:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeSignedWChar:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedWChar:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeChar16:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeChar32:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeChar8:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeShort:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedShort:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeInt:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedInt:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeLong:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedLong:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeLongLong:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedLongLong:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeInt128:
-        return str(valobj.GetValueAsSigned())
-    if basic_type == eBasicTypeUnsignedInt128:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeBool:
-        return str(valobj.GetValueAsUnsigned())
-    if basic_type == eBasicTypeHalf:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeFloat:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeDouble:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeLongDouble:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeFloatComplex:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeDoubleComplex:
-        return GetFloatStr(valobj)
-    if basic_type == eBasicTypeLongDoubleComplex:
-        return GetFloatStr(valobj)
-    return INVALID_SUMMARY
-
-
-def is_valid_pointer(ptr: SBValue) -> bool:
-    if not ptr:
-        print_trace("is_valid_pointer(): ptr is None")
-        return False
-    if not ptr.IsValid():
-        print_trace("is_valid_pointer(): ptr is not valid SBValue")
-        return False
-    if not ptr.GetType().IsPointerType():
-        print_trace("is_valid_pointer(): ptr is not a pointer")
-        return False
-    if ptr.GetValueAsUnsigned() == 0:
-        print_trace("is_valid_pointer(): ptr = nullptr")
-        return False
-    if not ptr.Dereference().IsValid():
-        print_trace("is_valid_pointer(): ptr dereference is not valid")
-        return False
-    return True
-
-
-def pointer_exists_and_is_null(ptr: SBValue) -> bool:
-    if ptr is None or not ptr.IsValid():
-        return False
-    if not ptr.GetType().IsPointerType():
-        return False
-    if ptr.GetValueAsUnsigned() == 0:
-        return True
-    return False
-
-
-def strip_quotes(val: str):
-    if val.startswith('U"'):
-        val = val.removeprefix('U"').removesuffix('"')
-    else:
-        val = val.removeprefix('"').removesuffix('"')
-    return val
-
-
-# Cowdata size is located at the cowdata address - 8 bytes (sizeof(uint64_t))
-def get_exception_trace(e: Exception, before_exception_limit=5, _this_call_depth=2) -> str:
-    stack_prefix = "Traceback (most recent call last):\n"
-    exception_trace = traceback.format_exception(type(e), e, e.__traceback__)
-    stack_trace_str = "".join(exception_trace[1:]).replace("\\n", "\n")
-    if before_exception_limit > 0:
-        before_exc_stack_trace = traceback.format_stack(limit=(before_exception_limit + 2))
-        stack_trace_str = (
-            "".join(before_exc_stack_trace[:-_this_call_depth]).replace("\\n", "\n") + "Handled:\n" + stack_trace_str
-        )
-    return stack_prefix + stack_trace_str
-
-
-def print_exception_trace(e: Exception, before_exception_limit=5) -> None:
-    print(get_exception_trace(e, before_exception_limit, 3))
-
-
-@print_trace_dec
-def get_offset_of_object_member(obj: SBValue, member: str) -> int:
-    if not obj.IsValid():
-        return -1
-    # check if obj is a pointer
-    if obj.GetType().IsPointerType():
-        obj = obj.Dereference()
-        if not obj.IsValid():
-            return -1
-    obj_addr: SBValue = obj.AddressOf()
-    element_addr_val = obj_addr.GetValueAsUnsigned()
-    member_val: SBValue = obj.GetChildMemberWithName(member)
-    member_addr: SBValue = member_val.AddressOf()
-    member_addr_val = member_addr.GetValueAsUnsigned()
-    return member_addr_val - element_addr_val  # type: ignore
-
-
-def not_null_check(valobj: SBValue) -> bool:
-    if not valobj or not valobj.IsValid():
-        return False
-    return True
-
-
-@print_trace_dec
-def get_synth_summary(synth_class, valobj: SBValue, dict):
-    obj = valobj
-    if valobj.IsSynthetic():
-        obj = valobj.GetNonSyntheticValue()
-    synth = synth_class(obj, dict, True)
-    summary = synth.get_summary()
-    return summary
-
-
-def ValCheck(val: SBValue) -> SBValue:
-    if not val:
-        raise Exception("SBValue is None")
-    error = val.GetError()
-    if error.Fail() or not val.IsValid():
-        fmt_err = f"{val.GetName()}: " if val.GetName() else ""
-        if error.Fail():
-            raise Exception(fmt_err + error.GetCString())
-        else:
-            raise Exception(fmt_err + "SBValue is not valid")
-    return val
-
-
-# ********************************************************
-# GODOT-SPECIFIC UTILITIES
-# ********************************************************
-
-
-NON_RECURSIVE = [
-    "String",
-    "Vector2",
-    "Vector2i",
-    "Rect2",
-    "Rect2i",
-    "Vector3",
-    "Vector3i",
-    "Transform2D",
-    "Vector4",
-    "Vector4i",
-    "Plane",
-    "Quaternion",
-    "AABB",
-    "Basis",
-    "Transform3D",
-    "Projection",
-    "Color",
-    "StringName",
-    "NodePath",
-    "RID",
-    # "Callable",
-    "Signal",
-    "ObjectID",
-]
-
-
-def get_valobj_name(valobj: SBValue) -> str:
-    fmt = "-{0}-"
-    if valobj is None or not hasattr(valobj, "GetName"):
-        return fmt.format("NULL")
-    elif not valobj.IsValid():
-        return "<INVALID>"
-    return fmt.format(valobj.GetName())
-
-
-@print_trace_dec
-def is_string_type(type: SBType):
-    if type is None:
-        return False
-    type_class = type.GetTypeClass()
-    if type_class == eTypeClassClass or type_class == eTypeClassPointer:
-        _class_type = type
-        if type_class == eTypeClassPointer:
-            _class_type = type.GetPointeeType()
-        type_name: str = _class_type.GetUnqualifiedType().GetDisplayTypeName()
-        if type_name == "String":
-            return True
-        elif type_name == "StringName":
-            return True
-        elif type_name == "StringBuffer":
-            return True
-        elif type_name == "NodePath":
-            return True
-    elif is_basic_string_type(type):
-        return True
-
-    return False
-
-
-@print_trace_dec
-def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
-    # global cow_err_str
-    size = 0
-    if not _cowdata or not _cowdata.IsValid():
-        print_trace("COWDATASIZE Invalid: _cowdata is not valid")
-        stack_fmt = traceback.format_stack()
-        print_trace("".join(stack_fmt[:-1]).replace("\\n", "\n"))
-        return None
-    try:
-        _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
-        if null_means_zero and pointer_exists_and_is_null(_ptr):
-            return 0
-        if not is_valid_pointer(_ptr):
-            print_trace("COWDATASIZE Invalid: _ptr is not valid")
-            return None
-        _cowdata_template_type: SBType = _cowdata.GetType().GetTemplateArgumentType(0)
-        if not _cowdata_template_type.IsValid():
-            print_trace("COWDATASIZE Invalid: _cowdata template type is not valid")
-            return None
-        uint64_type: SBType = _cowdata.GetTarget().GetBasicType(eBasicTypeUnsignedLongLong)
-        ptr_addr_val = _ptr.GetValueAsUnsigned()
-        if ptr_addr_val - 8 < 0:
-            print_trace("COWDATASIZE Invalid: ptr_addr_val - 8 is less than 0: " + str(ptr_addr_val))
-            return None
-        size_child: SBValue = _ptr.CreateValueFromAddress("size", ptr_addr_val - 8, uint64_type)
-        if not size_child.IsValid():
-            print_trace("COWDATASIZE Invalid: Size value at ptr_addr - 8 is not valid")
-            return None
-        size = size_child.GetValueAsSigned()
-        if size < 0:
-            print_trace("COWDATASIZE Invalid: Size is less than 0: " + str(size))
-            return None
-        if size > 0:
-            item_size = _ptr.GetType().GetByteSize()
-            last_val = _ptr.CreateValueFromAddress(
-                "_tmp_tail",
-                ptr_addr_val + ((size - 1) * item_size),
-                _ptr.GetType().GetPointeeType(),
-            )
-            if not last_val.IsValid():
-                print_trace("COWDATASIZE Invalid: Last value is not valid: " + str(last_val))
-                return None
-    except Exception as e:
-        print_verbose("COWDATASIZE Exception: " + str(e))
-        print_trace(get_exception_trace(e))
-        return None
-
-    return size
-
-
-def is_cowdata_valid(_cowdata: SBValue) -> bool:
-    size = _get_cowdata_size(_cowdata)
-    if size is None:
-        return False
-    return True
-
-
-def get_cowdata_size(_cowdata: SBValue) -> int:
-    size = _get_cowdata_size(_cowdata)
-    if size is None:
-        return 0
-    return size
 
 
 # ********************************************************
@@ -834,26 +138,18 @@ def Variant_GetValue(valobj: SBValue):
             return _projection
         else:
             return None
-    elif (
-        type == VariantType.STRING.value
-    ):  # For _mem values, we have to cast them to the correct type
+    elif type == VariantType.STRING.value:  # For _mem values, we have to cast them to the correct type
         # find the type for "String"
         stringType: SBType = target.FindFirstType("::String")
-        string: SBValue = target.CreateValueFromAddress(
-            "[string]", mem_addr, stringType
-        )
+        string: SBValue = target.CreateValueFromAddress("[string]", mem_addr, stringType)
         return string
     elif type == VariantType.VECTOR2.value:
         vector2Type: SBType = target.FindFirstType("::Vector2")
-        vector2: SBValue = target.CreateValueFromAddress(
-            "[vector2]", mem_addr, vector2Type
-        )
+        vector2: SBValue = target.CreateValueFromAddress("[vector2]", mem_addr, vector2Type)
         return vector2
     elif type == VariantType.VECTOR2I.value:
         vector2IType: SBType = target.FindFirstType("::Vector2i")
-        vector2i: SBValue = target.CreateValueFromAddress(
-            "[vector2i]", mem_addr, vector2IType
-        )
+        vector2i: SBValue = target.CreateValueFromAddress("[vector2i]", mem_addr, vector2IType)
         return vector2i
     elif type == VariantType.RECT2.value:
         rect2Type: SBType = target.FindFirstType("::Rect2")
@@ -861,33 +157,23 @@ def Variant_GetValue(valobj: SBValue):
         return rect2
     elif type == VariantType.RECT2I.value:
         rect2IType: SBType = target.FindFirstType("::Rect2i")
-        rect2i: SBValue = target.CreateValueFromAddress(
-            "[rect2i]", mem_addr, rect2IType
-        )
+        rect2i: SBValue = target.CreateValueFromAddress("[rect2i]", mem_addr, rect2IType)
         return rect2i
     elif type == VariantType.VECTOR3.value:
         vector3Type: SBType = target.FindFirstType("::Vector3")
-        vector3: SBValue = target.CreateValueFromAddress(
-            "[vector3]", mem_addr, vector3Type
-        )
+        vector3: SBValue = target.CreateValueFromAddress("[vector3]", mem_addr, vector3Type)
         return vector3
     elif type == VariantType.VECTOR3I.value:
         vector3iType: SBType = target.FindFirstType("::Vector3i")
-        vector3i: SBValue = target.CreateValueFromAddress(
-            "[vector3i]", mem_addr, vector3iType
-        )
+        vector3i: SBValue = target.CreateValueFromAddress("[vector3i]", mem_addr, vector3iType)
         return vector3i
     elif type == VariantType.VECTOR4.value:
         vector4Type: SBType = target.FindFirstType("::Vector4")
-        vector4: SBValue = target.CreateValueFromAddress(
-            "[vector4]", mem_addr, vector4Type
-        )
+        vector4: SBValue = target.CreateValueFromAddress("[vector4]", mem_addr, vector4Type)
         return vector4
     elif type == VariantType.VECTOR4I.value:
         vector4iType: SBType = target.FindFirstType("::Vector4i")
-        vector4i: SBValue = target.CreateValueFromAddress(
-            "[vector4i]", mem_addr, vector4iType
-        )
+        vector4i: SBValue = target.CreateValueFromAddress("[vector4i]", mem_addr, vector4iType)
         return vector4i
     elif type == VariantType.PLANE.value:
         planeType: SBType = target.FindFirstType("::Plane")
@@ -895,9 +181,7 @@ def Variant_GetValue(valobj: SBValue):
         return plane
     elif type == VariantType.QUATERNION.value:
         quaternionType: SBType = target.FindFirstType("::Quaternion")
-        quaternion: SBValue = target.CreateValueFromAddress(
-            "[quaternion]", mem_addr, quaternionType
-        )
+        quaternion: SBValue = target.CreateValueFromAddress("[quaternion]", mem_addr, quaternionType)
         return quaternion
     elif type == VariantType.COLOR.value:
         colorType: SBType = target.FindFirstType("::Color")
@@ -905,15 +189,11 @@ def Variant_GetValue(valobj: SBValue):
         return color
     elif type == VariantType.STRING_NAME.value:
         stringNameType: SBType = target.FindFirstType("::StringName")
-        stringName: SBValue = target.CreateValueFromAddress(
-            "[stringName]", mem_addr, stringNameType
-        )
+        stringName: SBValue = target.CreateValueFromAddress("[stringName]", mem_addr, stringNameType)
         return stringName
     elif type == VariantType.NODE_PATH.value:
         nodePathType: SBType = target.FindFirstType("::NodePath")
-        nodePath: SBValue = target.CreateValueFromAddress(
-            "[nodePath]", mem_addr, nodePathType
-        )
+        nodePath: SBValue = target.CreateValueFromAddress("[nodePath]", mem_addr, nodePathType)
         return nodePath
     elif type == VariantType.RID.value:
         ridType: SBType = target.FindFirstType("::RID")
@@ -921,27 +201,19 @@ def Variant_GetValue(valobj: SBValue):
         return rid
     elif type == VariantType.OBJECT.value:
         objDataType: SBType = target.FindFirstType("Variant::ObjData")
-        objData: SBValue = target.CreateValueFromAddress(
-            "[objData]", mem_addr, objDataType
-        )
+        objData: SBValue = target.CreateValueFromAddress("[objData]", mem_addr, objDataType)
         return objData.GetChildMemberWithName("obj")
     elif type == VariantType.CALLABLE.value:
         callableType: SBType = target.FindFirstType("::Callable")
-        callable: SBValue = target.CreateValueFromAddress(
-            "[callable]", mem_addr, callableType
-        )
+        callable: SBValue = target.CreateValueFromAddress("[callable]", mem_addr, callableType)
         return callable
     elif type == VariantType.SIGNAL.value:
         signalType: SBType = target.FindFirstType("::Signal")
-        signal: SBValue = target.CreateValueFromAddress(
-            "[signal]", mem_addr, signalType
-        )
+        signal: SBValue = target.CreateValueFromAddress("[signal]", mem_addr, signalType)
         return signal
     elif type == VariantType.DICTIONARY.value:
         dictionaryType: SBType = target.FindFirstType("::Dictionary")
-        dictionary: SBValue = target.CreateValueFromAddress(
-            "[dictionary]", mem_addr, dictionaryType
-        )
+        dictionary: SBValue = target.CreateValueFromAddress("[dictionary]", mem_addr, dictionaryType)
         return dictionary
     elif type == VariantType.ARRAY.value:
         arrayType: SBType = target.FindFirstType("::Array")
@@ -951,73 +223,55 @@ def Variant_GetValue(valobj: SBValue):
         if not is_valid_pointer(packed_array):
             return None
         if type == VariantType.PACKED_BYTE_ARRAY.value:
-            packedByteArrayType: SBType = target.FindFirstType(
-                "Variant::PackedArrayRef<unsigned char>"
-            )
+            packedByteArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<unsigned char>")
             packedByteArray: SBValue = target.CreateValueFromAddress(
                 "packedByteArrayref", packed_array_addr, packedByteArrayType
             )
             return packedByteArray.GetChildMemberWithName("array")
         elif type == VariantType.PACKED_INT32_ARRAY.value:
-            packedInt32ArrayType: SBType = target.FindFirstType(
-                "Variant::PackedArrayRef<int>"
-            )
+            packedInt32ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<int>")
             packedInt32Array: SBValue = target.CreateValueFromAddress(
                 "packedInt32Arrayref", packed_array_addr, packedInt32ArrayType
             )
             return packedInt32Array.GetChildMemberWithName("array")
         elif type == VariantType.PACKED_INT64_ARRAY.value:
-            packedInt64ArrayType: SBType = target.FindFirstType(
-                "Variant::PackedArrayRef<long long>"
-            )
+            packedInt64ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<long long>")
             packedInt64Array: SBValue = target.CreateValueFromAddress(
                 "packedInt64Arrayref", packed_array_addr, packedInt64ArrayType
             )
             return packedInt64Array.GetChildMemberWithName("array")
         elif type == VariantType.PACKED_FLOAT32_ARRAY.value:
-            packedFloat32ArrayType: SBType = target.FindFirstType(
-                "Variant::PackedArrayRef<float>"
-            )
+            packedFloat32ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<float>")
             packedFloat32Array: SBValue = target.CreateValueFromAddress(
                 "packedFloat32Arrayref", packed_array_addr, packedFloat32ArrayType
             )
             return packedFloat32Array.GetChildMemberWithName("array")
         elif type == VariantType.PACKED_FLOAT64_ARRAY.value:
-            packedFloat64ArrayType: SBType = target.FindFirstType(
-                "Variant::PackedArrayRef<double>"
-            )
+            packedFloat64ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<double>")
             packedFloat64Array: SBValue = target.CreateValueFromAddress(
                 "packedFloat64Arrayref", packed_array_addr, packedFloat64ArrayType
             )
             return packedFloat64Array.GetChildMemberWithName("array")
         elif type == VariantType.PACKED_VECTOR2_ARRAY.value:
-            packedVector2ArrayType: SBType = target.FindFirstType(
-                "Variant::PackedArrayRef<Vector2>"
-            )
+            packedVector2ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Vector2>")
             packedVector2Array: SBValue = target.CreateValueFromAddress(
                 "packedVector2Arrayref", packed_array_addr, packedVector2ArrayType
             )
             return packedVector2Array.GetChildMemberWithName("array")
         elif type == VariantType.PACKED_VECTOR3_ARRAY.value:
-            packedVector3ArrayType: SBType = target.FindFirstType(
-                "Variant::PackedArrayRef<Vector3>"
-            )
+            packedVector3ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Vector3>")
             packedVector3Array: SBValue = target.CreateValueFromAddress(
                 "packedVector3Arrayref", packed_array_addr, packedVector3ArrayType
             )
             return packedVector3Array.GetChildMemberWithName("array")
         elif type == VariantType.PACKED_STRING_ARRAY.value:
-            packedStringArrayType: SBType = target.FindFirstType(
-                "Variant::PackedArrayRef<String>"
-            )
+            packedStringArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<String>")
             packedStringArray: SBValue = target.CreateValueFromAddress(
                 "packedStringArrayref", packed_array_addr, packedStringArrayType
             )
             return packedStringArray.GetChildMemberWithName("array")
         elif type == VariantType.PACKED_COLOR_ARRAY.value:
-            packedColorArrayType: SBType = target.FindFirstType(
-                "Variant::PackedArrayRef<Color>"
-            )
+            packedColorArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Color>")
             packedColorArray: SBValue = target.CreateValueFromAddress(
                 "packedColorArrayref", packed_array_addr, packedColorArrayType
             )
@@ -1034,9 +288,7 @@ class _SBSyntheticValueProviderWithSummary(SBSyntheticValueProvider):
 
 
 class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
-    synth_by_id: weakref.WeakValueDictionary[
-        int, _SBSyntheticValueProviderWithSummary
-    ] = weakref.WeakValueDictionary()
+    synth_by_id: weakref.WeakValueDictionary[int, _SBSyntheticValueProviderWithSummary] = weakref.WeakValueDictionary()
     next_id = 0
 
     @print_trace_dec
@@ -1103,10 +355,7 @@ class Variant_SyntheticProvider(GodotSynthProvider):
     def check_valid(self, obj: SBValue) -> bool:
         variant_type = obj.GetChildMemberWithName("type").GetValueAsUnsigned()
         data = Variant_GetValue(obj)
-        if (
-            variant_type < VariantType.NIL.value
-            or variant_type >= VariantType.VARIANT_MAX.value
-        ):
+        if variant_type < VariantType.NIL.value or variant_type >= VariantType.VARIANT_MAX.value:
             return False
         if VariantType.NIL.value == variant_type:
             return True
@@ -1138,9 +387,7 @@ class Variant_SyntheticProvider(GodotSynthProvider):
         elif type == VariantType.FLOAT.value:
             return GetFloatStr(data)
         elif type == VariantType.OBJECT.value:
-            prefix = (
-                "{" + str(data.GetType().GetPointeeType().GetDisplayTypeName()) + "*:"
-            )
+            prefix = "{" + str(data.GetType().GetPointeeType().GetDisplayTypeName()) + "*:"
             # TODO: avoiding infinite recursion here by not calling GenericShortSummary
             # return prefix + GenericShortSummary(data, self.internal_dict, len(prefix)+1, True) + "}"
             return prefix + "{...}}"
@@ -1151,10 +398,7 @@ class Variant_SyntheticProvider(GodotSynthProvider):
             return summary
 
     def num_children(self, max=UINT32_MAX):
-        if (
-            self.variant_type <= VariantType.NIL.value
-            or self.variant_type >= VariantType.VARIANT_MAX.value
-        ):
+        if self.variant_type <= VariantType.NIL.value or self.variant_type >= VariantType.VARIANT_MAX.value:
             return 0
         else:
             if self.data is None:
@@ -1192,12 +436,8 @@ def NodePath_SummaryProvider(valobj: SBValue, internal_dict):
         return NULL_SUMMARY
     if not is_valid_pointer(data):
         return INVALID_SUMMARY
-    path = Vector_SyntheticProvider(
-        data.GetChildMemberWithName("path").GetNonSyntheticValue(), internal_dict
-    )
-    subpath = Vector_SyntheticProvider(
-        data.GetChildMemberWithName("subpath").GetNonSyntheticValue(), internal_dict
-    )
+    path = Vector_SyntheticProvider(data.GetChildMemberWithName("path").GetNonSyntheticValue(), internal_dict)
+    subpath = Vector_SyntheticProvider(data.GetChildMemberWithName("subpath").GetNonSyntheticValue(), internal_dict)
     path_size = path.num_children()
     subpath_size = subpath.num_children()
     if path_size == 0 and subpath_size == 0:
@@ -1265,9 +505,7 @@ def Callable_SummaryProvider(valobj: SBValue, internal_dict):
             custom_type: SBType = custom.GetType()
             if not custom_type.IsValid():
                 return "{{<CallableCustom> {0}}}".format(INVALID_SUMMARY)
-            return "{{<CallableCustom> {0}:{{...}}}}".format(
-                custom_type.GetPointeeType().GetDisplayTypeName()
-            )
+            return "{{<CallableCustom> {0}:{{...}}}}".format(custom_type.GetPointeeType().GetDisplayTypeName())
             # return "CallableCustom: " + GenericShortSummary(custom, internal_dict)
         else:
             # get the object
@@ -1275,9 +513,7 @@ def Callable_SummaryProvider(valobj: SBValue, internal_dict):
             obj_id_val = obj_id.GetValueAsUnsigned()
             if obj_id_val == 0:
                 return "{<Callable> " + NULL_SUMMARY + "}"
-            return "{{<Callable> object:{0}, method:{1}}}".format(
-                obj_id_val, method_name
-            )
+            return "{{<Callable> object:{0}, method:{1}}}".format(obj_id_val, method_name)
 
 
 @print_trace_dec
@@ -1347,18 +583,10 @@ def Rect2_SummaryProvider(valobj: SBValue, internal_dict):
 @print_trace_dec
 def Rect2i_SummaryProvider(valobj: SBValue, internal_dict):
     return "{{position: ({0}, {1}), size: ({2}, {3})}}".format(
-        valobj.GetChildMemberWithName("position")
-        .GetChildMemberWithName("x")
-        .GetValueAsSigned(),
-        valobj.GetChildMemberWithName("position")
-        .GetChildMemberWithName("y")
-        .GetValueAsSigned(),
-        valobj.GetChildMemberWithName("size")
-        .GetChildMemberWithName("x")
-        .GetValueAsSigned(),
-        valobj.GetChildMemberWithName("size")
-        .GetChildMemberWithName("y")
-        .GetValueAsSigned(),
+        valobj.GetChildMemberWithName("position").GetChildMemberWithName("x").GetValueAsSigned(),
+        valobj.GetChildMemberWithName("position").GetChildMemberWithName("y").GetValueAsSigned(),
+        valobj.GetChildMemberWithName("size").GetChildMemberWithName("x").GetValueAsSigned(),
+        valobj.GetChildMemberWithName("size").GetChildMemberWithName("y").GetValueAsSigned(),
     )
 
 
@@ -1390,20 +618,14 @@ def TryConstructNamedColorTable(target: SBTarget) -> None:
     if not constructed_the_table:
         global hex_color_to_name
         named_colors = target.FindFirstGlobalVariable("named_colors")
-        if (
-            not named_colors
-            or not named_colors.IsValid()
-            or named_colors.GetNumChildren() == 0
-        ):
+        if not named_colors or not named_colors.IsValid() or named_colors.GetNumChildren() == 0:
             return  # return without setting constructed_the_table; we might not be in the right context to do this
         hex_color_to_name = ConstructNamedColorTable(named_colors)
         constructed_the_table = True
         # print_trace(str(hex_color_to_name))
 
 
-def GetColorAlias(
-    valobj: SBValue, vals: Optional[tuple[float, float, float, float]] = None
-) -> str:
+def GetColorAlias(valobj: SBValue, vals: Optional[tuple[float, float, float, float]] = None) -> str:
     r, g, b, a = vals if vals else GetColorVals(valobj)
     hex_str = GetHexColor(r, g, b, a)
     TryConstructNamedColorTable(valobj.target)
@@ -1437,9 +659,7 @@ def Color_SummaryProvider(valobj: SBValue, internal_dict):
         hex_str = GetHexColor(r, g, b, a)
     else:
         hex_str = GetColorAlias(valobj, (r, g, b, a))
-    return "{{<{0}> r:{1:.3f}, g:{2:.3f}, b:{3:.3f}, a:{4:.3f}}}".format(
-        hex_str, r, g, b, a
-    )
+    return "{{<{0}> r:{1:.3f}, g:{2:.3f}, b:{3:.3f}, a:{4:.3f}}}".format(hex_str, r, g, b, a)
 
 
 @print_trace_dec
@@ -1464,9 +684,7 @@ def Transform2D_SummaryProvider(valobj: SBValue, internal_dict):
     x_row = valobj.GetChildMemberWithName("columns").GetChildAtIndex(0)
     y_row = valobj.GetChildMemberWithName("columns").GetChildAtIndex(1)
     o_row = valobj.GetChildMemberWithName("columns").GetChildAtIndex(2)
-    return "{{x: {0}, y: {1}, o: {2}}}".format(
-        x_row.GetSummary(), y_row.GetSummary(), o_row.GetSummary()
-    )
+    return "{{x: {0}, y: {1}, o: {2}}}".format(x_row.GetSummary(), y_row.GetSummary(), o_row.GetSummary())
 
 
 @print_trace_dec
@@ -1496,16 +714,12 @@ def Basis_SummaryProvider(valobj: SBValue, internal_dict):
     x_row = valobj.GetChildMemberWithName("rows").GetChildAtIndex(0)
     y_row = valobj.GetChildMemberWithName("rows").GetChildAtIndex(1)
     z_row = valobj.GetChildMemberWithName("rows").GetChildAtIndex(2)
-    return "{{{0}, {1}, {2}}}".format(
-        x_row.GetSummary(), y_row.GetSummary(), z_row.GetSummary()
-    )
+    return "{{{0}, {1}, {2}}}".format(x_row.GetSummary(), y_row.GetSummary(), z_row.GetSummary())
 
 
 @print_trace_dec
 def RID_SummaryProvider(valobj: SBValue, internal_dict):
-    return (
-        "<RID=" + str(valobj.GetChildMemberWithName("_id").GetValueAsUnsigned()) + ">"
-    )
+    return "<RID=" + str(valobj.GetChildMemberWithName("_id").GetValueAsUnsigned()) + ">"
 
 
 @print_trace_dec
@@ -1609,9 +823,7 @@ def GenericShortSummary(
     if type.IsPointerType():
         type = type.GetPointeeType()
     unqual_type_name = str(type.GetUnqualifiedType().GetDisplayTypeName())
-    if (
-        unqual_type_name == "Object" or unqual_type_name == "RefCounted"
-    ):  # these lead to circular references
+    if unqual_type_name == "Object" or unqual_type_name == "RefCounted":  # these lead to circular references
         return "{...}"
     if unqual_type_name.startswith("Ref<"):
         reference: SBValue = valobj.GetChildMemberWithName("reference")
@@ -1633,9 +845,7 @@ def GenericShortSummary(
         )
         return prefix + summary + "}"
     summ = None
-    if (
-        valobj.GetTypeSynthetic()
-    ):  # Synthetic types will call this function again and could lead to infinite recursion.
+    if valobj.GetTypeSynthetic():  # Synthetic types will call this function again and could lead to infinite recursion.
         if unqual_type_name == "Variant":
             # Avoid putting it through the synthetic provider.
             variant_value = Variant_GetValue(valobj.GetNonSyntheticValue())
@@ -1805,9 +1015,7 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
         if not self.check_valid(self.valobj):
             return INVALID_SUMMARY
         value_summary = GenericShortSummary(self.value, self.internal_dict)
-        if (
-            hasattr(self, "is_summary") and self.key_val_element_style
-        ):  # only show the value for the summary
+        if hasattr(self, "is_summary") and self.key_val_element_style:  # only show the value for the summary
             return value_summary
         key_summary = GenericShortSummary(self.key, self.internal_dict)
         return "[{0}]: {1}".format(key_summary, value_summary)
@@ -1827,9 +1035,7 @@ class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
         self.type: SBType = valobj.GetType()
         self.typename: str = self.type.GetUnqualifiedType().GetDisplayTypeName()
         self.no_cache = NO_CACHE_MEMBERS
-        self.cache_min = (
-            CACHE_MIN if not is_summary else Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY
-        )
+        self.cache_min = CACHE_MIN if not is_summary else Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY
         self.cache_fetch_max = CACHE_FETCH_MAX
         self._cached_size = 0
         super().__init__(valobj, internal_dict, is_summary)
@@ -1880,9 +1086,7 @@ class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
         self._cached_size = value
 
     @print_trace_dec
-    def get_children_summary(
-        self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY
-    ) -> str:
+    def get_children_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY) -> str:
         if self.num_elements == 0:
             return ""
         max_children = min(Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, self.num_elements)
@@ -1953,40 +1157,26 @@ class PagedArray_SyntheticProvider(_ListOfChildren_SyntheticProvider):
         page_pool = obj.GetChildMemberWithName("page_pool")
         if not is_valid_pointer(page_pool):
             return False
-        pages_allocated = page_pool.GetChildMemberWithName(
-            "pages_allocated"
-        ).GetValueAsUnsigned(0)
-        pages_available = page_pool.GetChildMemberWithName(
-            "pages_available"
-        ).GetValueAsUnsigned(0)
+        pages_allocated = page_pool.GetChildMemberWithName("pages_allocated").GetValueAsUnsigned(0)
+        pages_available = page_pool.GetChildMemberWithName("pages_available").GetValueAsUnsigned(0)
         if pages_allocated < pages_available:
             return False
         try:  # try getting the last element
             index = size - 1
-            page_size_shift: int = obj.GetChildMemberWithName(
-                "page_size_shift"
-            ).GetValueAsUnsigned(0)
-            page_size_mask: int = obj.GetChildMemberWithName(
-                "page_size_mask"
-            ).GetValueAsUnsigned(0)
+            page_size_shift: int = obj.GetChildMemberWithName("page_size_shift").GetValueAsUnsigned(0)
+            page_size_mask: int = obj.GetChildMemberWithName("page_size_mask").GetValueAsUnsigned(0)
             page_index = index >> page_size_shift
             offset = index & page_size_mask
-            if (
-                page_index > UINT32_MAX or offset > UINT32_MAX
-            ):  # PagedArray can't be bigger than this
+            if page_index > UINT32_MAX or offset > UINT32_MAX:  # PagedArray can't be bigger than this
                 return False
             if page_index > pages_allocated:
                 return False
-            array_type = (
-                page_data.GetType().GetPointeeType().GetArrayType(size).GetPointerType()
-            )
+            array_type = page_data.GetType().GetPointeeType().GetArrayType(size).GetPointerType()
             ptr_cast = page_data.Cast(array_type)
             last_page = ptr_cast.GetChildAtIndex(page_index)
             if not last_page or not last_page.IsValid():
                 return False
-            last_val: SBValue = last_page.GetChildAtIndex(
-                offset, eDynamicCanRunTarget, True
-            )
+            last_val: SBValue = last_page.GetChildAtIndex(offset, eDynamicCanRunTarget, True)
             if not last_val or not last_val.IsValid():
                 return False
         except Exception as e:
@@ -2004,22 +1194,11 @@ class PagedArray_SyntheticProvider(_ListOfChildren_SyntheticProvider):
             self.num_elements = 0
             self.ptr = None
             return
-        self.item_type = (
-            self.ptr.GetType().GetPointeeType().GetPointeeType() if self.ptr else None
-        )
+        self.item_type = self.ptr.GetType().GetPointeeType().GetPointeeType() if self.ptr else None
         self.item_size = self.item_type.GetByteSize() if self.item_type else 0
-        self.page_size_shift: int = self.valobj.GetChildMemberWithName(
-            "page_size_shift"
-        ).GetValueAsUnsigned(0)
-        self.page_size_mask: int = self.valobj.GetChildMemberWithName(
-            "page_size_mask"
-        ).GetValueAsUnsigned(0)
-        pointer_to_array_type = (
-            self.ptr.GetType()
-            .GetPointeeType()
-            .GetArrayType(self.num_elements)
-            .GetPointerType()
-        )
+        self.page_size_shift: int = self.valobj.GetChildMemberWithName("page_size_shift").GetValueAsUnsigned(0)
+        self.page_size_mask: int = self.valobj.GetChildMemberWithName("page_size_mask").GetValueAsUnsigned(0)
+        pointer_to_array_type = self.ptr.GetType().GetPointeeType().GetArrayType(self.num_elements).GetPointerType()
         self.ptr_cast = self.ptr.Cast(pointer_to_array_type)
 
     def _create_child_at_element_index(self, index) -> SBValue:
@@ -2032,9 +1211,7 @@ class PagedArray_SyntheticProvider(_ListOfChildren_SyntheticProvider):
         page_index = index >> self.page_size_shift
         offset = index & self.page_size_mask
         page_data: SBValue = self.ptr_cast.GetChildAtIndex(page_index)
-        child = page_data.CreateChildAtOffset(
-            name, offset * self.item_size, self.item_type
-        )
+        child = page_data.CreateChildAtOffset(name, offset * self.item_size, self.item_type)
         return child
 
 
@@ -2080,9 +1257,7 @@ class _ArrayLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
         """
         self.num_elements = self.get_len(self.valobj)
         self.ptr = self.get_ptr(self.valobj)
-        self.item_type = (
-            self.ptr.GetType().GetPointeeType() if not_null_check(self.ptr) else None
-        )
+        self.item_type = self.ptr.GetType().GetPointeeType() if not_null_check(self.ptr) else None
         self.item_size = self.item_type.GetByteSize() if self.item_type else 0
         if not self.check_valid(self.valobj):
             self.num_elements = 0
@@ -2102,9 +1277,7 @@ class _ArrayLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
             ptr_address = self.ptr.GetValueAsUnsigned()
             if ptr_address == 0:
                 return None
-            return self.ptr.CreateValueFromAddress(
-                name, ptr_address + (index * self.item_size), self.item_type
-            )
+            return self.ptr.CreateValueFromAddress(name, ptr_address + (index * self.item_size), self.item_type)
         except:
             return None
 
@@ -2149,9 +1322,7 @@ class HashSet_SyntheticProvider(_ArrayLike_SyntheticProvider):
         return obj.GetChildMemberWithName("num_elements").GetValueAsUnsigned(0)
 
 
-def _VMap_Pair_get_keypair_summaries(
-    valobj: SBValue, internal_dict, is_VMap_Summary=False
-) -> tuple[str, str]:
+def _VMap_Pair_get_keypair_summaries(valobj: SBValue, internal_dict, is_VMap_Summary=False) -> tuple[str, str]:
     key: SBValue = valobj.GetChildMemberWithName("key")
     value: SBValue = valobj.GetChildMemberWithName("value")
     key_summary = GenericShortSummary(key, internal_dict, 0, False, is_VMap_Summary)
@@ -2179,16 +1350,9 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
         super().update()
         if self.num_elements == 0:
             return
-        self.key_template_type: SBType = (
-            self.valobj.GetType().GetTemplateArgumentType(0) if self.valobj else None
-        )
+        self.key_template_type: SBType = self.valobj.GetType().GetTemplateArgumentType(0) if self.valobj else None
         self.key_val_element_style = should_use_key_val_style(self.key_template_type)
-        pointer_to_array_type = (
-            self.ptr.GetType()
-            .GetPointeeType()
-            .GetArrayType(self.num_elements)
-            .GetPointerType()
-        )
+        pointer_to_array_type = self.ptr.GetType().GetPointeeType().GetArrayType(self.num_elements).GetPointerType()
         self.ptr_cast = self.ptr.Cast(pointer_to_array_type)
         self.cached_key_summaries = list[str]()
         self.cached_key_to_idx_map = dict[str, int]()
@@ -2257,9 +1421,7 @@ class VMap_SyntheticProvider(_ArrayLike_SyntheticProvider):
         if self.no_cache:
             for i in range(self.num_elements):
                 child = self.ptr_cast.GetChildAtIndex(i, eDynamicCanRunTarget, True)
-                key_summary = GenericShortSummary(
-                    child.GetChildMemberWithName("key"), self.internal_dict
-                )
+                key_summary = GenericShortSummary(child.GetChildMemberWithName("key"), self.internal_dict)
                 if key_summary == key:
                     return i
             return None
@@ -2436,9 +1598,7 @@ class List_SyntheticProvider(_LinkedListLike_SyntheticProvider):
         offset = get_offset_of_object_member(element, "value")
         if offset < 0:
             return None
-        return element.CreateChildAtOffset(
-            "[{0}]".format(str(index)), offset, value.GetType()
-        )
+        return element.CreateChildAtOffset("[{0}]".format(str(index)), offset, value.GetType())
 
 
 class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
@@ -2462,12 +1622,8 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
         self.key_val_element_style: bool = False
         self.key_template_type: SBType = None
         if self.num_elements != 0:
-            self.key_template_type = (
-                self.valobj.GetType().GetTemplateArgumentType(0) if is_valid else None
-            )
-            self.key_val_element_style = should_use_key_val_style(
-                self.key_template_type
-            )
+            self.key_template_type = self.valobj.GetType().GetTemplateArgumentType(0) if is_valid else None
+            self.key_val_element_style = should_use_key_val_style(self.key_template_type)
         if not self.no_cache:
             self._cache_elements(self.cache_min)
 
@@ -2533,10 +1689,7 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
 
     @print_trace_dec
     def get_index_of_key(self, key: str):
-        if (
-            key in self.cached_key_to_idx_map
-            and self.cached_key_to_idx_map[key] is not None
-        ):
+        if key in self.cached_key_to_idx_map and self.cached_key_to_idx_map[key] is not None:
             return self.cached_key_to_idx_map[key]
         while len(self.cached_elements) < self.num_elements:  # type: ignore
             new_length = len(self.cached_elements) + self.cache_fetch_max
@@ -2550,12 +1703,7 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
 
     @print_trace_dec
     def _get_child_summary(self, index):
-        if (
-            index < 0
-            or index >= self.num_elements
-            or not self.valobj
-            or self.valobj.IsValid() == False
-        ):
+        if index < 0 or index >= self.num_elements or not self.valobj or self.valobj.IsValid() == False:
             return INVALID_SUMMARY
         child = self._create_child_at_element_index(index)
         if not not_null_check(child):
@@ -2597,9 +1745,7 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
             self.cached_elements.append(element)
             if self.key_val_element_style:
                 key = self.get_list_element_key(element)
-                keySummary = GenericShortSummary(
-                    key, self.internal_dict, 0, False, False
-                )
+                keySummary = GenericShortSummary(key, self.internal_dict, 0, False, False)
                 self.cached_key_to_idx_map[keySummary] = len(self.cached_elements) - 1
                 self.cached_idx_to_key_map[len(self.cached_elements) - 1] = keySummary
 
@@ -2620,19 +1766,13 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
             self.cached_key_to_idx_map[keyname] = index
         if index not in self.cached_idx_to_key_map:
             self.cached_idx_to_key_map[index] = keyname
-        value = element.CreateValueFromData(
-            "[" + keyname + "]", element.GetData(), element.GetType()
-        )
+        value = element.CreateValueFromData("[" + keyname + "]", element.GetData(), element.GetType())
         return value
 
 
 class RBMap_SyntheticProvider(HashMap_SyntheticProvider):
     def get_len(self, obj: SBValue):
-        return (
-            obj.GetChildMemberWithName("_data")
-            .GetChildMemberWithName("size_cache")
-            .GetValueAsUnsigned(0)
-        )
+        return obj.GetChildMemberWithName("_data").GetChildMemberWithName("size_cache").GetValueAsUnsigned(0)
 
     def get_ptr(self, obj: SBValue) -> SBValue:
         return obj.EvaluateExpression("front()").GetNonSyntheticValue()
@@ -2680,9 +1820,7 @@ class _Proxy_SyntheticProvider(GodotSynthProvider):
         raise Exception("Not implemented")
 
     def check_valid(self, obj: SBValue):
-        return self.synth_proxy and self.synth_proxy.check_valid(
-            self.synth_proxy.valobj
-        )
+        return self.synth_proxy and self.synth_proxy.check_valid(self.synth_proxy.valobj)
 
     def get_summary(self):
         if not self.check_valid(self.valobj):
@@ -2769,17 +1907,9 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
             self.synth_proxy = get_synth_provider_for_object(
                 Vector_SyntheticProvider, _data, self.internal_dict, self.is_summary
             )
-            self.size_mask = self.valobj.GetChildMemberWithName(
-                "size_mask"
-            ).GetValueAsSigned()
-            self.read_pos = (
-                self.valobj.GetChildMemberWithName("read_pos").GetValueAsSigned()
-                & self.size_mask
-            )
-            self.write_pos = (
-                self.valobj.GetChildMemberWithName("write_pos").GetValueAsSigned()
-                & self.size_mask
-            )
+            self.size_mask = self.valobj.GetChildMemberWithName("size_mask").GetValueAsSigned()
+            self.read_pos = self.valobj.GetChildMemberWithName("read_pos").GetValueAsSigned() & self.size_mask
+            self.write_pos = self.valobj.GetChildMemberWithName("write_pos").GetValueAsSigned() & self.size_mask
 
     def get_summary(self):
         if not self.check_valid(self.valobj):
@@ -2791,9 +1921,7 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
             read_pos_summary = "<read_pos:{0}>".format(self.read_pos)
             write_pos_summary = "<write_pos:{0}>".format(self.write_pos)
             proxy_children_sum = self.synth_proxy.get_children_summary()
-            children_summary = (
-                f"{read_pos_summary} {write_pos_summary} {proxy_children_sum}"
-            )
+            children_summary = f"{read_pos_summary} {write_pos_summary} {proxy_children_sum}"
         return LIST_FORMAT.format(
             type_name=self.valobj.GetType().GetUnqualifiedType().GetDisplayTypeName(),
             type_no_template="RingBuffer",
@@ -2838,208 +1966,6 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
 
 
 # ********************************************************
-# REGISTRATION
-# ********************************************************
-
-IDRE = "([^,]+)"
-
-
-def id_template(min, max):
-    th = f"{IDRE}"
-    if min == 1 and max == 1:
-        return th
-    temp = f"{th}"
-    for i in range(min - 1):
-        temp += f",{th}"
-    for i in range(max - min):
-        temp += f"(?:,{th})?"
-    return temp
-
-
-def get_template_regex(name: str, min, max) -> str:
-    return f"^(::)?{name}<{id_template(min, max)}>$"
-
-
-# fmt: off
-
-HASHSET_PATTERN:str = "^(::)?HashSet<.+(,[^,]+)?(,[^,]+)?>$"
-HASHMAP_PATTERN:str = "^(::)?HashMap<.+,.+(,[^,]+)?(,[^,]+)?(,[^,]+)?>$"
-LIST_PATTERN:str = "^(::)?List<.+(,[^,]+)?>$"
-ARRAY_PATTERN:str = "^(::)?Array$"
-TYPEDARRAY_PATTERN:str = "^(::)?TypedArray<.+>$"
-DICTIONARY_PATTERN:str = "^(::)?Dictionary$"
-VECTOR_PATTERN:str = "^(::)?Vector<.+>$"
-HASH_MAP_ELEMENT_PATTERN:str = "^(::)?HashMapElement<.+,.+>$"
-KEY_VALUE_PATTERN:str = "^(::)?KeyValue<.+,.+>$"
-VMAP_PATTERN:str = "^(::)?VMap<.+,.+>$"
-VMAP_PAIR_PATTERN:str = "^(::)?VMap<.+,.+>::Pair$"
-VSET_PATTERN:str = "^(::)?VSet<.+>$"
-RINGBUFFER_PATTERN:str = "^(::)?RingBuffer<.+>$"
-LOCAL_VECTOR_PATTERN:str = "^(::)?LocalVector<.+(,[^,]+){0,3}>$"
-PAGED_ARRAY_PATTERN:str = "^(::)?PagedArray<.+>$"
-RBMAP_PATTERN:str = "^(::)?RBMap<.+,.+(,[^,]+){0,2}>$"
-RBMAP_ELEMENT_PATTERN:str = "^(::)?RBMap<.+,.+(,[^,]+){0,2}>::Element$"
-
-
-SYNTHETIC_PROVIDERS: dict[str,type] = {
-    "^(::)?Variant$":          Variant_SyntheticProvider,
-    # HASH_MAP_ELEMENT_PATTERN:  HashMapElement_SyntheticProvider,
-    VECTOR_PATTERN:            Vector_SyntheticProvider,
-    LIST_PATTERN:              List_SyntheticProvider,
-    HASHSET_PATTERN:           HashSet_SyntheticProvider,
-    ARRAY_PATTERN:             Array_SyntheticProvider,
-    TYPEDARRAY_PATTERN:        Array_SyntheticProvider,
-    HASHMAP_PATTERN:           HashMap_SyntheticProvider,
-    DICTIONARY_PATTERN:        Dictionary_SyntheticProvider,
-    VMAP_PATTERN:              VMap_SyntheticProvider,
-    VSET_PATTERN:              VSet_SyntheticProvider,
-    RINGBUFFER_PATTERN:        RingBuffer_SyntheticProvider,
-    LOCAL_VECTOR_PATTERN:      LocalVector_SyntheticProvider,
-    PAGED_ARRAY_PATTERN:       PagedArray_SyntheticProvider,
-    RBMAP_PATTERN:             RBMap_SyntheticProvider,
-    # RBMAP_ELEMENT_PATTERN:     RBMapElement_SyntheticProvider,
-}
-
-SUMMARY_PROVIDERS: dict[str,object] = {
-    "^(::)?String$":        String_SummaryProvider,
-    "^(::)?CharString$":    CharString_SummaryProvider,
-    "^(::)?Ref<.+>$":       Ref_SummaryProvider,
-    "^(::)?Vector2$":       Vector2_SummaryProvider,
-    "^(::)?Vector2i$":      Vector2i_SummaryProvider,
-    "^(::)?Rect2$":         Rect2_SummaryProvider,
-    "^(::)?Rect2i$":        Rect2i_SummaryProvider,
-    "^(::)?Vector3$":       Vector3_SummaryProvider,
-    "^(::)?Vector3i$":      Vector3i_SummaryProvider,
-    "^(::)?Transform2D$":   Transform2D_SummaryProvider,
-    "^(::)?Vector4$":       Vector4_SummaryProvider,
-    "^(::)?Vector4i$":      Vector4i_SummaryProvider,
-    "^(::)?Plane$":         Plane_SummaryProvider,
-    "^(::)?Quaternion$":    Quaternion_SummaryProvider,
-    "^(::)?AABB$":          AABB_SummaryProvider,
-    "^(::)?Basis$":         Basis_SummaryProvider,
-    "^(::)?Transform3D$":   Transform3D_SummaryProvider,
-    "^(::)?Projection$":    Projection_SummaryProvider,
-    "^(::)?Color$":         Color_SummaryProvider,
-    "^(::)?StringName$":    StringName_SummaryProvider,
-    "^(::)?NodePath$":      NodePath_SummaryProvider,
-    "^(::)?RID$":           RID_SummaryProvider,
-    "^(::)?Callable$":      Callable_SummaryProvider,
-    "^(::)?Signal$":        Signal_SummaryProvider,
-    "^(::)?ObjectID$":      ObjectID_SummaryProvider,
-    KEY_VALUE_PATTERN:      KeyValue_SummaryProvider,
-    HASH_MAP_ELEMENT_PATTERN: HashMapElement_SummaryProvider,
-    RBMAP_ELEMENT_PATTERN:     RBMapElement_SummaryProvider,
-    VMAP_PAIR_PATTERN:      VMap_Pair_SummaryProvider,
-}
-# fmt: on
-
-module = sys.modules[__name__]
-cpp_category: SBTypeCategory
-
-
-def attach_synthetic_to_type(type_name, synth_class, is_regex=True):
-    global module, cpp_category
-    # print_trace('attaching synthetic %s to "%s", is_regex=%s' %(synth_class.__name__, type_name, is_regex))
-    synth = SBTypeSynthetic.CreateWithClassName(__name__ + "." + synth_class.__name__)
-    synth.SetOptions(eTypeOptionCascade)
-    cpp_category.AddTypeSynthetic(SBTypeNameSpecifier(type_name, is_regex), synth)
-
-    def summary_fn(valobj, dict):
-        return get_synth_summary(synth_class, valobj, dict)
-
-    # LLDB accesses summary fn's by name, so we need to create a unique one.
-    summary_fn.__name__ = "_get_synth_summary_" + synth_class.__name__
-    setattr(module, summary_fn.__name__, summary_fn)
-    print_trace(
-        f"attaching summary {summary_fn.__name__} to {type_name}, is_regex={is_regex}"
-    )
-    summary = SBTypeSummary.CreateWithFunctionName(__name__ + "." + summary_fn.__name__)
-    summary.SetOptions(eTypeOptionCascade)
-    cpp_category.AddTypeSummary(SBTypeNameSpecifier(type_name, is_regex), summary)
-
-    # attach_summary_to_type(summary_fn, type_name, is_regex)
-
-
-def attach_summary_to_type(
-    type_name, real_summary_fn, is_regex=False, real_fn_name: Optional[str] = None
-):
-    global module, cpp_category
-    if not real_fn_name:
-        real_fn_name = str(real_summary_fn.__qualname__)
-
-    def __spfunc(valobj, dict):
-        try:
-            return real_summary_fn(valobj, dict)
-        except Exception as e:
-            err_msg = "ERROR in " + real_fn_name + ": " + str(e)
-            print_verbose(err_msg)
-            print_verbose(get_exception_trace(e))
-            return f"<{err_msg}>"
-
-    # LLDB accesses summary fn's by name, so we need to create a unique one.
-    __spfunc.__name__ = "__spfunc__" + real_fn_name.replace(".", "_")
-    setattr(module, __spfunc.__name__, __spfunc)
-
-    summary = SBTypeSummary.CreateWithFunctionName(__name__ + "." + __spfunc.__name__)
-    summary.SetOptions(eTypeOptionCascade)
-    cpp_category.AddTypeSummary(SBTypeNameSpecifier(type_name, is_regex), summary)
-
-
-# TODO: Collate globals better
-def clear_globals():
-    GodotSynthProvider.synth_by_id.clear()
-    GodotSynthProvider.next_id = 0
-    hex_color_to_name.clear()
-    global constructed_the_table
-    constructed_the_table = False
-
-
-def register_all_synth_and_summary_providers():
-    force_compat(Opts.MIDEBUGGER_COMPAT)
-    clear_globals()
-    for key in SUMMARY_PROVIDERS:
-        try:
-            attach_summary_to_type(key, SUMMARY_PROVIDERS[key], True)
-        except Exception as e:
-            print_verbose("EXCEPTION: " + str(e))
-    for key in SYNTHETIC_PROVIDERS:
-        try:
-            attach_synthetic_to_type(key, SYNTHETIC_PROVIDERS[key], True)
-        except Exception as e:
-            print_verbose("EXCEPTION st: " + str(e))
-
-
-def monkey_patch_optparse():
-    if not "bool" in optparse.Option.TYPES:
-        optparse.Option.TYPES = optparse.Option.TYPES + ("bool",)
-    if not "bool" in optparse.Option.TYPE_CHECKER:
-        optparse.Option.TYPE_CHECKER[
-            "bool"
-        ] = lambda option, opt, value: value.lower() in [
-            "true",
-            "t",
-            "yes",
-            "y",
-            "1",
-        ]
-
-
-def __lldb_init_module(debugger: SBDebugger, dict):
-    global cpp_category
-
-    cpp_category = debugger.GetDefaultCategory()
-    register_all_synth_and_summary_providers()
-    monkey_patch_optparse()
-    print("godot-formatter synth and summary types have been loaded")
-    debugger.HandleCommand(
-        'command container add godot-formatter -h "godot-formatter commands" -o'
-    )
-    SetOptsCommand.register_lldb_command(debugger, __name__, "godot-formatter")
-    GetOptsCommand.register_lldb_command(debugger, __name__, "godot-formatter")
-    ReloadCommand.register_lldb_command(debugger, __name__, "godot-formatter")
-
-
-# ********************************************************
 # COMMANDS
 # ********************************************************
 
@@ -3069,14 +1995,8 @@ class _LLDBCommandBase:
             print('The "{0}" command failed to install.'.format(cls.program))
             return
 
-        full_program_name = (
-            cls.program if not container_name else container_name + " " + cls.program
-        )
-        print(
-            'The "{0}" command has been installed, type "help {0}" for detailed help.'.format(
-                full_program_name
-            )
-        )
+        full_program_name = cls.program if not container_name else container_name + " " + cls.program
+        print('The "{0}" command has been installed, type "help {0}" for detailed help.'.format(full_program_name))
 
     @classmethod
     def create_options(cls):
@@ -3199,11 +2119,7 @@ class SetOptsCommand(_LLDBCommandBase):
         try:
             (options, args) = self.parser.parse_args(command_args)
         except:
-            if (
-                command_args
-                and len(command_args) > 0
-                and ("--help" in command_args or "-h" in command_args)
-            ):
+            if command_args and len(command_args) > 0 and ("--help" in command_args or "-h" in command_args):
                 print(self.get_long_help())
                 return
             # if you don't handle exceptions, passing an incorrect argument to
