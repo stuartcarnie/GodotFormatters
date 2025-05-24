@@ -409,7 +409,7 @@ def __LLDB_DUMPER():
         'lldb::LogOutputCallback': 'Callable[[str, any], None]',
         'lldb::SBDebuggerDestroyCallback': 'Callable[[int, any], None]'
     }
-    
+
     RETURN_TYPE_OVERRIDE_MAP: dict[str, str] = {
         "GetSummary": "str",
     }
@@ -439,7 +439,6 @@ def __LLDB_DUMPER():
         suffix = '\n' +indent_str + '"""\n'
         return prefix + '    ' * indent + doc.replace('\n', '\n' + '    ' * indent) + suffix
 
-
     def __process_function_doc_strings(obj_name, doc:str):
         # remove all the lines that don't begin with the obj_name or "Returns"
         if not doc:
@@ -449,9 +448,6 @@ def __LLDB_DUMPER():
             if line.startswith(obj_name + "("):
                 lines.append(line)
         return '\n'.join(lines)
-
-
-
 
     non_lldb_types: list[str] = []
     lldb_types = []
@@ -464,7 +460,7 @@ def __LLDB_DUMPER():
     def get_python_type(arg_type: str):
         if not arg_type:
             return ''
-        
+
         if ',' in arg_type:
             arg_types = arg_type.split(',')
             new_arg_types = []
@@ -516,7 +512,7 @@ def __LLDB_DUMPER():
             arg_type = 'int'
 
         return arg_type.strip()
-    
+
     class ArgDef:
         def __init__(self, name:str, type:str , default_val: str = None):
             self.name = name
@@ -619,7 +615,7 @@ def __LLDB_DUMPER():
             if '(make an event that contains a C string)' in line:
                 for l in line.split('(make an event that contains a C string)'):
                     lines.append(l.strip())
-                    # remove the original line  
+                    # remove the original line
                 lines_to_remove.append(line)
             elif line == '':
                 lines_to_remove.append(line)
@@ -644,7 +640,6 @@ def __LLDB_DUMPER():
                 func_def.return_type = return_type
                 func_defs.append(func_def)
                 return func_defs
-            
 
             signature = comps[0]
             # split the signature into the function name and the arguments
@@ -673,8 +668,8 @@ def __LLDB_DUMPER():
                         # check the enum dict to see if the default value is in there
                         # TODO: eventually get enums working
                         # for enum_name, enum_values in enum_defs.items():
-                            # if default_val in enum_values:
-                                # default_val = enum_name + '.' + default_val + '.value'
+                        # if default_val in enum_values:
+                        # default_val = enum_name + '.' + default_val + '.value'
                         pass
                     if arg_type == 'int':
                         # remove the 'U' from the default value
@@ -682,7 +677,7 @@ def __LLDB_DUMPER():
                 arg_defs.append(ArgDef(arg_name, arg_type, default_val))
             func_def = FunctionStub(function_name, arg_defs, return_type, doc)
             func_defs.append(func_def)
-            
+
         # check if we can compress the function defs into one
         # if len(func_defs) > 1:
         #     """
@@ -691,7 +686,7 @@ def __LLDB_DUMPER():
         #         def GetChildAtIndex(self: SBValue, idx: int, use_dynamic: int, can_create_synthetic: bool) -> SBValue: ...
         #         def GetChildMemberWithName(self: SBValue, name: str) -> SBValue: ...
         #         def GetChildMemberWithName(self: SBValue, name: str, use_dynamic: int) -> SBValue: ...
-                
+
         #         if their argument names match, then we can compress them into one function, by setting the default values for the extra arguments to `None`:
         #         def GetChildAtIndex(self: SBValue, idx: int, use_dynamic: int = None, can_create_synthetic: bool = None) -> SBValue: ...
         #         def GetChildMemberWithName(self: SBValue, name: str, use_dynamic: int = None) -> SBValue: ...
@@ -741,7 +736,7 @@ def __LLDB_DUMPER():
         #                 to_remove.append(shorter_func_def_index)
         #     func_defs = [func_def for i, func_def in enumerate(func_defs) if i not in to_remove]
         return func_defs
-            
+
     ANY_OBJECTS = [
         "ScriptObjectPtr",
         "FileSP"
@@ -751,7 +746,7 @@ def __LLDB_DUMPER():
         for enum_name, enum_values in ENUM_DICT.items():
             enum_start_to_type_map[enum_values[0]] = enum_name
             enum_defs[enum_name] = []
-        
+
         source = inspect.getsource(module)
         source_lines = source.split('\n')
         start_index = 0
@@ -770,7 +765,7 @@ def __LLDB_DUMPER():
             if line.strip() == '':
                 continue
             if line.startswith('class SB'):
-                #we've reached the end
+                # we've reached the end
                 break
             # we use the enum_start_to_type_map to get the type of the enum
             enum_decl = line.split('=')[0].strip()
@@ -779,7 +774,7 @@ def __LLDB_DUMPER():
                 enum_defs[current_enum_type] = []
             enum_defs[current_enum_type].append(line.split('=')[0].strip())
         return enum_defs
-    
+
     def create_enum_typings_file(module):
         enum_defs = create_enum_typings(module)
         enum_str = 'from enum import Enum\n\n' + 'import lldb' + '\n\n'
@@ -810,7 +805,7 @@ def __LLDB_DUMPER():
                 enum_str += f'    {enum_value} = lldb.{enum_value}\n'
             enum_str += '\n'
         return enum_str
-    
+
     def write_enum_typings_file(module):
         enum_str = create_enum_typings_file(module)
         import os
@@ -819,7 +814,7 @@ def __LLDB_DUMPER():
         with open(os.path.join(__directory, "typings", 'lldb_enums.pyi'), 'w') as f:
             f.write(enum_str)
             f.close()
-        
+
     def get_preamble():
         return_str = 'from lldb_enums import *\nfrom typing import Any, Callable, List, Tuple, Optional\n\n\n'
         # get every single enum value that we have and declare it like `enum_value: int`
@@ -898,7 +893,7 @@ def __LLDB_DUMPER():
             if defaults:
                 if i > len(args.args) - len(defaults):
                     default_val = defaults[i - (len(args.args) - len(defaults))]
-                
+
             arg_defs.append(ArgDef(arg_name, arg_type, default_val))
         # check for var args
         if args.varargs:
@@ -914,14 +909,14 @@ def __LLDB_DUMPER():
         if len(funcs) == 0:
             funcs = [get_function_def_from_inspector(class_name, grandchild[1], grandchild[0], indent)]
         return funcs
-    
+
     def create_typings_file(module):
         for child in inspect.getmembers(module, __is_relevant):
             if inspect.isclass(child[1]):
                 class_map[child[0]] = dump_class(child)
             else:
                 global_func_map[child[0]] = get_function_def_from_inspector("", child[1], child[0])
-                    
+
         # now throw that away
         return_str = get_preamble()
         for method in global_func_map.values():
@@ -934,15 +929,15 @@ def __LLDB_DUMPER():
         return_str += "\n\n\n\n # All the non-lldb seen in the above functions:\n"
         for arg_type in non_lldb_types:
             return_str += f"# {arg_type}\n"
-        
+
         return_str += "\n\n\n\n # All the lldb typedefs seen in the above functions:\n"
         for lldb_typedef in lldb_typedefs:
             return_str += f"# {lldb_typedef}\n"
-        
+
         return_str += "\n\n\n\n # All the lldb types seen in the above functions:\n"
         for lldb_type in lldb_types:
             return_str += f"# {lldb_type}\n"
-            
+
         return_str += "\n\n\n\n # All the types we didn't handle:\n"
         for failed_type in failed_types:
             return_str += f"# {failed_type}\n"
@@ -956,11 +951,10 @@ def __LLDB_DUMPER():
         with open(os.path.join(__directory, "typings", 'lldb.pyi'), 'w') as f:
             f.write(create_typings_file(module))
             f.close()
-    
+
     import lldb
     write_enum_typings_file(lldb)
     write_typing_file(lldb)
 
-        
 
 __LLDB_DUMPER()
