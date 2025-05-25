@@ -30,9 +30,9 @@ HELP_STRING_MAP = {
     "SUMMARY_STRING_MAX_LENGTH": "Maximum length of a summary string",
     "MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY": "Maximum amount of children to display in a summary string",
     "NAMED_COLOR_ANNOTATION": "Annotate color summaries with their named color if applicable",
-    "MAP_KEY_VAL_STYLE": 'Display children in Map-like templates in a key-value list style (e.g. ["key"] = "value").\nIf false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")',
+    "MAP_KEY_VAL_STYLE": 'Display children in Map-like templates in a key-value list style (e.g. ["key"] = "value"). If false, will display children in an indexed-list style (e.g. [0] = ["key"]: "value")',
     "SANITIZE_STRING_SUMMARY": "Sanitize string summaries to escape all formatting characters and quotes",
-    "MIDEBUGGER_COMPAT": "Force compatibility settings with the MIDebugger interface (i.e. the official MS C++ vscode debugger `cppdbg`).\nThis is not necessary if using a native LLDB interface (e.g. `codelldb` debugger extension for vscode)",
+    "MIDEBUGGER_COMPAT": "Force compatibility settings with the MIDebugger interface (i.e. the official MS C++ vscode debugger `cppdbg`). This is not necessary if using a native LLDB interface (e.g. `lldp-dap` debugger extension for vscode)",
     "FILTER": "List of regex filters to apply to trace output",
 }
 

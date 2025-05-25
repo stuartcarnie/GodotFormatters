@@ -45,6 +45,9 @@ from lldb import (SBCommandReturnObject, SBExecutionContext, SBTypeCategory, eFo
 from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger, SBTypeSummary, SBTypeSynthetic, SBTypeNameSpecifier)
 
 
+FORMATTER_NAME = "godot_formatter"
+CONTAINER_NAME = "_" + FORMATTER_NAME
+
 # TODO: Collate globals better
 def clear_globals():
     try:
@@ -64,12 +67,13 @@ def __lldb_init_module(debugger: SBDebugger, dict):
     cpp_category = debugger.GetDefaultCategory()
     register_all_synth_and_summary_providers(debugger)
     monkey_patch_optparse()
-    print("WOOOP!!!")
-    print("godot-formatter synth and summary types have been loaded")
-    debugger.HandleCommand('command container add godot-formatter -h "godot-formatter commands" -o')
-    SetOptsCommand.register_lldb_command(debugger, __name__, "godot-formatter")
-    GetOptsCommand.register_lldb_command(debugger, __name__, "godot-formatter")
-    ReloadCommand.register_lldb_command(debugger, __name__, "godot-formatter")
+    print(f"{FORMATTER_NAME} synth and summary types have been loaded")
+    # for some godforsaken reason, the container name doesn't work through vscode repl unless it's aliased
+    debugger.HandleCommand(f'command container add {CONTAINER_NAME} -h "{FORMATTER_NAME} commands" -H "{FORMATTER_NAME} <subcommand> [<subcommand-options>]" -o')
+    debugger.HandleCommand(f'command alias {FORMATTER_NAME} {CONTAINER_NAME}')
+    SetOptsCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
+    GetOptsCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
+    ReloadCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
 
 
 
@@ -190,7 +194,9 @@ class _LLDBCommandBase:
     description = ""
 
     @classmethod
-    def register_lldb_command(cls, debugger: SBDebugger, module_name, container_name):
+    def register_lldb_command(cls, debugger: SBDebugger, module_name: str, container_name: str, alias_name: str):
+        # now add an alias
+        alias = f'{container_name}_{cls.program}'
         if not cls.program:
             print("ERROR: No program name specified for command")
             return
@@ -209,8 +215,9 @@ class _LLDBCommandBase:
             print("ERROR: " + str(e))
             print('The "{0}" command failed to install.'.format(cls.program))
             return
+        prefix = alias_name if alias_name else container_name
+        full_program_name = prefix + " " + cls.program
 
-        full_program_name = cls.program if not container_name else container_name + " " + cls.program
         print('The "{0}" command has been installed, type "help {0}" for detailed help.'.format(full_program_name))
 
     @classmethod
@@ -246,7 +253,7 @@ class ReloadCommand(_LLDBCommandBase):
 
 
 class GetOptsCommand(_LLDBCommandBase):
-    program = "get-opts"
+    program = "get_opts"
     description = "This command prints a list of the current option settings for the Godot formatter script."
 
     def __call__(
@@ -260,12 +267,16 @@ class GetOptsCommand(_LLDBCommandBase):
         # shell would
         results = []
         dir_opts = dir(Opts)
+        max_attr_len = max(len(attr) for attr in dir(Opts))
         for attr in dir(Opts):
             if attr.startswith("__"):
                 continue
-            result = f"{attr}: {getattr(Opts, attr)}"
-            print(result)
-            results.append(result)
+            val = getattr(Opts, attr)
+            if val is None or val == "":
+                val = "<None>"
+            help_string = HELP_STRING_MAP[str(attr)]
+            res = f"{attr:{max_attr_len}} - {help_string}\n    - current value: {val}"
+            results.append(res)
         result.AppendMessage("\n".join(results))
         result.SetStatus(eReturnStatusSuccessFinishResult)
         # not returning anything is akin to returning success
@@ -273,7 +284,7 @@ class GetOptsCommand(_LLDBCommandBase):
 
 
 class SetOptsCommand(_LLDBCommandBase):
-    program = "set-opts"
+    program = "set_opts"
     description = "This command sets the options for the Godot formatter script."
 
     @classmethod
@@ -299,7 +310,7 @@ class SetOptsCommand(_LLDBCommandBase):
             attr_type = type(attr_val)
             # get the attribute docstring
             help_string = HELP_STRING_MAP[attr] + f" (default: {attr_val})\n"
-            parser.add_option(
+            _ = parser.add_option(
                 f"--{attr.lower().replace('_', '-')}",
                 action="store",
                 type=attr_type.__name__,
@@ -354,6 +365,7 @@ class SetOptsCommand(_LLDBCommandBase):
                 continue
             set_option = True
             Opts.__setattr__(option, options.__dict__[option])
+            print(f"Set option {option} to {options.__dict__[option]}")
         if not set_option:
             result.SetError("No options were set")
             self.parser.print_help()
