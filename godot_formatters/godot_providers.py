@@ -895,8 +895,6 @@ def GenericShortSummary(
         return summ
     if no_children:
         return "{...}"
-    thigny = SBPlatform()
-    thingy = thigny.MakeDirectory("sdgsadgds")
     base_classes: list[SBType] = type.get_bases_array()
     base_class_names = [base_class.GetName() for base_class in base_classes]
     summ_str = "{"
@@ -968,27 +966,56 @@ def HashMapElement_SummaryProvider(valobj: SBValue, internal_dict):
 def RBMapElement_SummaryProvider(valobj: SBValue, internal_dict):
     return map_element_summary(valobj, internal_dict, "_data")
 
+HASHMAP_TRACE_ENABLED = False
+
+def hashmap_trace(func):
+    if not HASHMAP_TRACE_ENABLED:
+        return func
+    def _pr_trace_wrap(*args, **kwargs):
+        # get the function return type
+        exception_return_value = None
+        if isinstance(func.__annotations__, dict):
+            return_type = func.__annotations__.get("return")
+            if return_type == int:
+                exception_return_value = 0
+            if return_type == str:
+                exception_return_value = ERROR_SUMMARY
+            else:
+                exception_return_value = None
+        else:
+            exception_return_value = None
+        try:
+            # if not Opts.PRINT_VERBOSE:
+            #     return func(*args, **kwargs)
+            return trace_func_call(func, *args, **kwargs)
+        except Exception as e:
+            print_exception_trace(e)
+            return exception_return_value
+
+    _pr_trace_wrap.__name__ = func.__name__
+    _pr_trace_wrap.__qualname__ = func.__qualname__
+    return _pr_trace_wrap
 
 # Disabled for now, causing crashes
 class HashMapElement_SyntheticProvider(GodotSynthProvider):
     key_val_element_style: bool = Opts.MAP_KEY_VAL_STYLE
 
-    @print_trace_dec
+    @hashmap_trace
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         super().__init__(valobj, internal_dict, is_summary)
         # self.update()
 
-    @print_trace_dec
+    @hashmap_trace
     def update(self):
         pass
 
-    @print_trace_dec
+    @hashmap_trace
     def check_valid(self, obj: SBValue) -> bool:
         if not obj or not obj.IsValid():
             return False
         return True
 
-    @print_trace_dec
+    @hashmap_trace
     def get_index_of_child(self, name):
         if name == "[key]" or name == "key":
             return 0
@@ -996,13 +1023,13 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
             return 1
         return None
 
-    @print_trace_dec
+    @hashmap_trace
     def get_data(self) -> Optional[SBValue]:
         if not self.check_valid(self.valobj):
             return None
         return self.valobj.GetChildMemberWithName("data")
 
-    @print_trace_dec
+    @hashmap_trace
     def get_key(self) -> Optional[SBValue]:
         data = self.get_data()
         if not data or not data.IsValid():
@@ -1011,7 +1038,7 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
         type = key.GetType()
         return self.valobj.CreateValueFromData("[key]", key.GetData(), type)
 
-    @print_trace_dec
+    @hashmap_trace
     def get_value(self) -> Optional[SBValue]:
         data = self.get_data()
         if not data or not data.IsValid():
@@ -1020,7 +1047,7 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
         type = value.GetType()
         return self.valobj.CreateValueFromData("[value]", value.GetData(), type)
 
-    @print_trace_dec
+    @hashmap_trace
     def get_child_at_index(self, idx: int) -> SBValue:
         if idx < 0 or idx > 1:
             return SBValue()
@@ -1030,18 +1057,20 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
             return self.get_value() or SBValue()
         # return self.valobj
 
-    @print_trace_dec
+    @hashmap_trace
     def num_children(self, max=UINT32_MAX) -> int:
         if not self.check_valid(self.valobj):
             return 0
         return 2
 
-    @print_trace_dec
+    @hashmap_trace
     def has_children(self):
+        if not self.check_valid(self.valobj):
+            return False
         return True
 
-    @print_trace_dec
-    def get_summary(self):
+    @hashmap_trace
+    def get_summary(self) -> str:
         if not self.check_valid(self.valobj):
             return INVALID_SUMMARY
         value = self.get_value()
@@ -1303,7 +1332,7 @@ class _ArrayLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
         if not_null_check(self.ptr) and not (not self.ptr):
             self.item_type = self.ptr.GetType().GetPointeeType()
         self.item_size = self.item_type.GetByteSize() if self.item_type else 0
-        if not self.check_valid(self.valobj):
+        if self.item_size == 0 or not self.check_valid(self.valobj):
             self.num_elements = 0
             self.ptr = None
 
@@ -1522,7 +1551,7 @@ class _LinkedListLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
     def get_list_element_data(self, element: SBValue) -> SBValue:
         raise Exception("Not implemented")
 
-    @print_trace_dec
+    @hashmap_trace
     def _cache_elements(self, size: int):
         if self.num_elements == 0 or size == 0:
             return
@@ -1549,7 +1578,7 @@ class _LinkedListLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
                 break
             self.cached_elements.append(element)
 
-    @print_trace_dec
+    @hashmap_trace
     def check_valid(self, obj: SBValue) -> bool:
         if not not_null_check(obj):
             return False
@@ -1588,7 +1617,7 @@ class _LinkedListLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
                     return False
         return True
 
-    @print_trace_dec
+    @hashmap_trace
     def update(self):
         if self.cached_elements is None:
             self.cached_elements = list[SBValue]()
@@ -1600,7 +1629,7 @@ class _LinkedListLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
             return
         self._cache_elements(self.cache_min)
 
-    @print_trace_dec
+    @hashmap_trace
     def _get_uncached_element_at_index(self, index: int) -> Optional[SBValue]:
         if index < 0 or index >= self.num_elements or self.valobj.IsValid() == False:
             return None
@@ -1611,7 +1640,7 @@ class _LinkedListLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
                 break
         return element
 
-    @print_trace_dec
+    @hashmap_trace
     def _create_child_at_element_index(self, index: int) -> Optional[SBValue]:
         if index < 0 or index >= self.num_elements or self.valobj.IsValid() == False:
             return None
@@ -1675,14 +1704,13 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
     key_template_type: Optional[SBType] = None
     num_elements: int = 0
     no_cache: bool = False
+    cached_skip_length: int = -1
     
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         super().__init__(valobj, internal_dict, is_summary)
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def update(self) -> None:
         self.num_elements = self.get_len(self.valobj)
         is_valid = self.check_valid(self.valobj)
@@ -1699,56 +1727,46 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
         if not self.no_cache:
             self._cache_elements(self.cache_min)
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_0
+    @hashmap_trace
     def get_len(self, obj: SBValue):
         return obj.GetChildMemberWithName("num_elements").GetValueAsUnsigned()
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def get_ptr(self, obj: SBValue) -> SBValue:
         return obj.GetChildMemberWithName("head_element")
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def get_tail(self, obj: SBValue) -> SBValue:
         return obj.GetChildMemberWithName("tail_element")
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def get_list_element_next(self, element: SBValue) -> SBValue:
         return element.GetChildMemberWithName("next")
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def get_list_element_prev(self, element: SBValue) -> SBValue:
         return element.GetChildMemberWithName("prev")
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def get_list_element_data(self, element: SBValue) -> SBValue:
         return element.GetChildMemberWithName("data")
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def get_list_element_key(self, element: SBValue) -> SBValue:
         return self.get_list_element_data(element).GetChildMemberWithName("key")
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def get_list_element_keyvalue(self, element: SBValue) -> SBValue:
         return self.get_list_element_data(element).GetChildMemberWithName("value")
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def get_index_of_child(self, name: str):
         if self.key_val_element_style:
             return self.get_index_of_key(name.lstrip("[").rstrip("]"))
         else:
             return int(name.lstrip("[").rstrip("]"))
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def get_index_of_key(self, key: str):
         if key in self.cached_key_to_idx_map and self.cached_key_to_idx_map[key] is not None:
             return self.cached_key_to_idx_map[key]
@@ -1762,23 +1780,32 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
                 return idx
         return None
 
-    @print_trace_dec
+    @hashmap_trace
     @wrap_in_try_except_ret_error_summary
     def _get_child_summary(self, real_index: int) -> str:
         if real_index < 0 or real_index >= self.num_elements or not self.valobj or self.valobj.IsValid() == False:
             return INVALID_SUMMARY
-        child = self._create_child_at_element_index(real_index)
-        if not not_null_check(child) or not child:
+        keyval_synth_val = self._create_child_at_element_index(real_index)
+        if not not_null_check(keyval_synth_val) or not keyval_synth_val:
             return INVALID_SUMMARY
-        element = child.GetNonSyntheticValue()
-        key = self.get_list_element_key(element)
-        value = self.get_list_element_keyvalue(element)
+        keyval_data = keyval_synth_val.GetNonSyntheticValue()
+        # both RBMap and HashMap use KeyValue<K, V> for the data member of their elements
+        key = keyval_data.GetChildMemberWithName("key")
+        value = keyval_data.GetChildMemberWithName("value")
         key_summary = GenericShortSummary(key, self.internal_dict)
         value_summary = GenericShortSummary(value, self.internal_dict)
         return "[{0}]: {1}".format(key_summary, value_summary)
+    
+    def get_offset_of_element_data(self, element: SBValue) -> int:
+        if self.cached_skip_length >= 0:
+            return self.cached_skip_length
+        data = self.get_list_element_data(element)
+        next_addr = element.GetChildMemberWithName("next").GetAddress()
+        data_addr = data.GetAddress()
+        self.cached_skip_length = data_addr.GetOffset() - next_addr.GetOffset()
+        return self.cached_skip_length
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def _cache_elements(self, size: int):
         if self.num_elements == 0 or size == 0:
             return
@@ -1814,8 +1841,7 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
                 self.cached_key_to_idx_map[keySummary] = len(self.cached_elements) - 1
                 self.cached_idx_to_key_map[len(self.cached_elements) - 1] = keySummary
 
-    @print_trace_dec
-    @wrap_in_try_except_ret_none
+    @hashmap_trace
     def _create_synthetic_child(self, element: SBValue, index):
         if not element or not element.IsValid():
             print_trace("HashMap_SyntheticProvider._create_synthetic_child(): element is None or invalid")
@@ -1833,7 +1859,9 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
             self.cached_key_to_idx_map[keyname] = index
         if index not in self.cached_idx_to_key_map:
             self.cached_idx_to_key_map[index] = keyname
-        value = element.CreateValueFromData("[" + keyname + "]", element.GetData(), element.GetType())
+        offset = self.get_offset_of_element_data(element)
+        hme_data_type = self.get_list_element_data(element).GetType()
+        value = element.CreateChildAtOffset("[{0}]".format(str(index)), offset, hme_data_type)
         return value
 
 
@@ -1846,6 +1874,15 @@ class RBMap_SyntheticProvider(HashMap_SyntheticProvider):
 
     def get_tail(self, obj: SBValue) -> SBValue:
         raise Exception("Not implemented, should not be called")
+    
+    def get_offset_of_element_data(self, element: SBValue) -> int:
+        if self.cached_skip_length >= 0:
+            return self.cached_skip_length
+        data = self.get_list_element_data(element)
+        data_addr = data.GetAddress()
+        right_addr = element.GetChildMemberWithName("right").GetAddress()
+        self.cached_skip_length = data_addr.GetOffset() - right_addr.GetOffset()
+        return self.cached_skip_length
 
     def get_list_element_next(self, element: SBValue) -> SBValue:
         return element.GetChildMemberWithName("_next")
