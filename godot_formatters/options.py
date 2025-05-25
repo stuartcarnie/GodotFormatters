@@ -53,6 +53,7 @@ NULL_SUMMARY = "<null>"
 NIL_SUMMARY = "<nil>"  # Variant nil
 EMPTY_SUMMARY = "<empty>"  # Empty string, nodepath, etc.
 INVALID_SUMMARY = "<invalid>"  # Invalid pointer, uninitialized objects, etc.
+ERROR_SUMMARY = "<!ERROR!>"  # Error summary
 LIST_FORMAT = "{type_no_template}[{size}]{{{children}}}"
 
 # Synthetic list-like configs; because linked-lists need to traverse the list to get a specific element, we need to cache the members to be performant.

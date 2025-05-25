@@ -58,6 +58,59 @@ def self_none_if_invalid(func):
 
     return wrapper
 
+def self_none_if_invalid_ret(func):
+    def wrapper(*args, **kwargs):
+        if not not_null_check(args[1]):
+            return None
+        ret = func(*args, **kwargs)
+        if not not_null_check(ret):
+            return None
+        return ret
+    return wrapper
+
+def wrap_in_try_except_ret_error_summary(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            print(f"Error calling {func.__name__}")
+            print(str(e))
+            traceback.print_exc()   
+            return ERROR_SUMMARY
+    return wrapper
+
+def wrap_in_try_except_ret_none(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            print(f"Error calling {func.__name__}")
+            print(str(e))
+            traceback.print_exc()
+            return None
+    return wrapper
+
+def wrap_in_try_except_ret_false(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            print(f"Error calling {func.__name__}")
+            print(str(e))
+            traceback.print_exc()
+            return False
+    return wrapper
+
+def wrap_in_try_except_ret_0(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            print(f"Error calling {func.__name__}")
+            print(str(e))
+            traceback.print_exc()
+            return 0    
+    return wrapper
 
 def self_zero_if_invalid(func):
     def wrapper(*args, **kwargs):
@@ -510,7 +563,7 @@ def get_offset_of_object_member(obj: SBValue, member: str) -> int:
     return member_addr_val - element_addr_val  # type: ignore
 
 
-def not_null_check(valobj: SBValue) -> bool:
+def not_null_check(valobj: Optional[SBValue]) -> bool:
     if not valobj or not valobj.IsValid():
         return False
     return True
@@ -605,7 +658,7 @@ def is_string_type(type: SBType):
 
 
 @print_trace_dec
-def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
+def get_cowdata_size_or_none(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
     # global cow_err_str
     size = 0
     if not _cowdata or not _cowdata.IsValid():
@@ -656,14 +709,14 @@ def _get_cowdata_size(_cowdata: SBValue, null_means_zero=True) -> Optional[int]:
 
 
 def is_cowdata_valid(_cowdata: SBValue) -> bool:
-    size = _get_cowdata_size(_cowdata)
+    size = get_cowdata_size_or_none(_cowdata)
     if size is None:
         return False
     return True
 
 
 def get_cowdata_size(_cowdata: SBValue) -> int:
-    size = _get_cowdata_size(_cowdata)
+    size = get_cowdata_size_or_none(_cowdata)
     if size is None:
         return 0
     return size
