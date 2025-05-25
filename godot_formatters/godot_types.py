@@ -1,8 +1,6 @@
 from importlib import reload
 import godot_formatters.godot_providers
 
-# we have to force reload the dependent modules to make lldb update the providers if we're re-loading the module
-godot_formatters.godot_providers = reload(godot_formatters.godot_providers)
 from godot_formatters.godot_providers import *
 
 

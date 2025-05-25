@@ -158,14 +158,14 @@ def register_all_synth_and_summary_providers(debugger: SBDebugger):
     for key in SUMMARY_PROVIDERS:
         try:
             # remove the current type summary if it exists
-            debugger.HandleCommand(f"type summary delete -a {key}")
+            debugger.HandleCommand(f"type summary delete {key}")
             attach_summary_to_type(key, SUMMARY_PROVIDERS[key], True)
         except Exception as e:
             print_verbose("EXCEPTION: " + str(e))
     for key in SYNTHETIC_PROVIDERS:
         try:
             # remove the current type synthetic if it exists
-            debugger.HandleCommand(f"type synthetic delete -a {key}")
+            debugger.HandleCommand(f"type synthetic delete {key}")
             attach_synthetic_to_type(key, SYNTHETIC_PROVIDERS[key], True)
         except Exception as e:
             print_verbose("EXCEPTION st: " + str(e))
