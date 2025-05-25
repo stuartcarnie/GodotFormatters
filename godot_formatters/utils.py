@@ -29,9 +29,7 @@ from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeE
 
 import godot_formatters.options
 
-reload(godot_formatters.options)
 from godot_formatters.options import *
-
 
 def print_verbose(val: str):
     if Opts.PRINT_VERBOSE or Opts.PRINT_TRACE:
@@ -219,12 +217,12 @@ def trace_func_call(func, *args, **kwargs):
 
     args_str = ", ".join([get_arg_str(sanitize(i, arg)) for i, arg in enumerate(args)])
     args_str += ", ".join([f"{key}={get_arg_str(val)}" for key, val in kwargs.items()])
-    print_trace(get_start_tr_format(f"{func_name}({args_str})"))
+    print_verbose(get_start_tr_format(f"{func_name}({args_str})"))
     level += 1
     ret = mk_func_call(func, *args, **kwargs)
     level -= 1
     ret_str = get_arg_str(ret)
-    print_trace(get_end_tr_format(func_name) + f" -> {ret_str}")
+    print_verbose(get_end_tr_format(func_name) + f" -> {ret_str}")
     return ret
 
 
@@ -252,8 +250,8 @@ def trace_none_if_invalid_dec(func):
     def wrapper(*args, **kwargs):
         if not not_null_check(args[1]):
             func_name = get_func_name(func, args)
-            print_trace(get_gsp_print_str(func_name, args))
-            print_trace(get_end_tr_format(func_name) + ": Aborting due to invalid args[1]")
+            print_verbose(get_gsp_print_str(func_name, args))
+            print_verbose(get_end_tr_format(func_name) + ": Aborting due to invalid args[1]")
             return None
         return trace_func_call(func, *args, **kwargs)
 
@@ -494,19 +492,19 @@ def get_basic_printable_string(valobj: SBValue) -> str:
 
 def is_valid_pointer(ptr: SBValue) -> bool:
     if not ptr:
-        print_trace("is_valid_pointer(): ptr is None")
+        print_verbose("is_valid_pointer(): ptr is None")
         return False
     if not ptr.IsValid():
-        print_trace("is_valid_pointer(): ptr is not valid SBValue")
+        print_verbose("is_valid_pointer(): ptr is not valid SBValue")
         return False
     if not ptr.GetType().IsPointerType():
-        print_trace("is_valid_pointer(): ptr is not a pointer")
+        print_verbose("is_valid_pointer(): ptr is not a pointer")
         return False
     if ptr.GetValueAsUnsigned() == 0:
-        print_trace("is_valid_pointer(): ptr = nullptr")
+        print_verbose("is_valid_pointer(): ptr = nullptr")
         return False
     if not ptr.Dereference().IsValid():
-        print_trace("is_valid_pointer(): ptr dereference is not valid")
+        print_verbose("is_valid_pointer(): ptr dereference is not valid")
         return False
     return True
 
@@ -574,7 +572,7 @@ def get_synth_summary(synth_class, valobj: SBValue, dict):
     obj = valobj
     if valobj.IsSynthetic():
         obj = valobj.GetNonSyntheticValue()
-    synth = synth_class(obj, dict, True)
+    synth = synth_class(obj, dict, 1)
     summary = synth.get_summary()
     return summary
 
@@ -662,33 +660,33 @@ def get_cowdata_size_or_none(_cowdata: SBValue, null_means_zero=True) -> Optiona
     # global cow_err_str
     size = 0
     if not _cowdata or not _cowdata.IsValid():
-        print_trace("COWDATASIZE Invalid: _cowdata is not valid")
+        print_verbose("COWDATASIZE Invalid: _cowdata is not valid")
         stack_fmt = traceback.format_stack()
-        print_trace("".join(stack_fmt[:-1]).replace("\\n", "\n"))
+        print_verbose("".join(stack_fmt[:-1]).replace("\\n", "\n"))
         return None
     try:
         _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
         if null_means_zero and pointer_exists_and_is_null(_ptr):
             return 0
         if not is_valid_pointer(_ptr):
-            print_trace("COWDATASIZE Invalid: _ptr is not valid")
+            print_verbose("COWDATASIZE Invalid: _ptr is not valid")
             return None
         _cowdata_template_type: SBType = _cowdata.GetType().GetTemplateArgumentType(0)
         if not _cowdata_template_type.IsValid():
-            print_trace("COWDATASIZE Invalid: _cowdata template type is not valid")
+            print_verbose("COWDATASIZE Invalid: _cowdata template type is not valid")
             return None
         uint64_type: SBType = _cowdata.GetTarget().GetBasicType(eBasicTypeUnsignedLongLong)
         ptr_addr_val = _ptr.GetValueAsUnsigned()
         if ptr_addr_val - 8 < 0:
-            print_trace("COWDATASIZE Invalid: ptr_addr_val - 8 is less than 0: " + str(ptr_addr_val))
+            print_verbose("COWDATASIZE Invalid: ptr_addr_val - 8 is less than 0: " + str(ptr_addr_val))
             return None
         size_child: SBValue = _ptr.CreateValueFromAddress("size", ptr_addr_val - 8, uint64_type)
         if not size_child.IsValid():
-            print_trace("COWDATASIZE Invalid: Size value at ptr_addr - 8 is not valid")
+            print_verbose("COWDATASIZE Invalid: Size value at ptr_addr - 8 is not valid")
             return None
         size = size_child.GetValueAsSigned()
         if size < 0:
-            print_trace("COWDATASIZE Invalid: Size is less than 0: " + str(size))
+            print_verbose("COWDATASIZE Invalid: Size is less than 0: " + str(size))
             return None
         if size > 0:
             item_size = _ptr.GetType().GetByteSize()
@@ -698,11 +696,11 @@ def get_cowdata_size_or_none(_cowdata: SBValue, null_means_zero=True) -> Optiona
                 _ptr.GetType().GetPointeeType(),
             )
             if not last_val.IsValid():
-                print_trace("COWDATASIZE Invalid: Last value is not valid: " + str(last_val))
+                print_verbose("COWDATASIZE Invalid: Last value is not valid: " + str(last_val))
                 return None
     except Exception as e:
         print_verbose("COWDATASIZE Exception: " + str(e))
-        print_trace(get_exception_trace(e))
+        print_verbose(get_exception_trace(e))
         return None
 
     return size
