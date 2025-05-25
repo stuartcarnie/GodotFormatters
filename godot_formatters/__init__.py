@@ -26,6 +26,14 @@ import godot_formatters.godot_types
 godot_formatters.godot_types = reload(godot_formatters.godot_types)
 from godot_formatters.godot_types import *
 
+import godot_formatters.lookup
+godot_formatters.lookup = reload(godot_formatters.lookup)
+from godot_formatters.lookup import *
+
+
+godot_formatters.godot_providers.get_synthetic_provider_for_type = get_synthetic_provider_for_type
+godot_formatters.godot_providers.get_summary_provider_for_type = get_summary_provider_for_type
+
 
 from lldb import SBDebugger
 from lldb import (SBCommandReturnObject, SBExecutionContext, SBTypeCategory, eFormatBytes, eFormatCString, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 

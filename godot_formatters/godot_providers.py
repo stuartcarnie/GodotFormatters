@@ -16,7 +16,7 @@ import json
 from enum import Enum
 import weakref
 from types import TracebackType
-from typing import Any, Generic, Never, TypeVar, final, Optional
+from typing import Any, Callable, Generic, Never, TypeVar, final, Optional
 
 # fmt: off
 from lldb import (SBCommandReturnObject, SBExecutionContext, SBPlatform, SBTypeCategory, SBValue, eFormatBytes, eFormatCString, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
@@ -28,6 +28,11 @@ from lldb import (SBCommandReturnObject, SBExecutionContext, SBPlatform, SBTypeC
 from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger, SBTypeSummary, SBTypeSynthetic, SBTypeNameSpecifier)
 # fmt: on
 # fmt: off
+
+# avoid circular import
+get_synthetic_provider_for_type: Callable[[str], Optional[type]]
+get_summary_provider_for_type: Callable[[str], Optional[type]]
+
 
 from importlib import reload
 
@@ -292,7 +297,7 @@ def Variant_GetValue(valobj: SBValue):
 
 
 class _SBSyntheticValueProviderWithSummary(SBSyntheticValueProvider):
-    def get_summary(self) -> str:
+    def get_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, max_str_len=Opts.SUMMARY_STRING_MAX_LENGTH) -> str:
         raise Exception("Not implemented")
 
     def check_valid(self, obj: SBValue) -> bool:
@@ -310,6 +315,8 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
         self.internal_dict = internal_dict
         self.is_summary = is_summary
         self.obj_id = GodotSynthProvider.next_id
+        GodotSynthProvider.synth_by_id[self.obj_id] = self
+        GodotSynthProvider.next_id += 1
 
     # SBSyntheticValueProvider, override these
     def num_children(self, max=UINT32_MAX) -> int:
@@ -342,10 +349,10 @@ class GodotSynthProvider(_SBSyntheticValueProviderWithSummary):
 
     # _SBSyntheticValueProviderWithSummary
     @print_trace_dec
-    def get_summary(self) -> str:
+    def get_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, max_str_len=Opts.SUMMARY_STRING_MAX_LENGTH) -> str:
         if not self.check_valid(self.valobj):
             return INVALID_SUMMARY
-        return GenericShortSummary(self.valobj, self.internal_dict)
+        return GenericShortSummary(self.valobj, self.internal_dict, summary_length=max_str_len, no_children=True)
 
     def check_valid(self, obj: SBValue) -> bool:
         print("check_valid not implemented")
@@ -357,7 +364,11 @@ T = TypeVar('T', bound=_SBSyntheticValueProviderWithSummary)
 def get_synth_provider_for_object(cls: type[T], valobj: SBValue, internal_dict, is_summary) -> T:
     obj_id = valobj.GetIndexOfChildWithName("$$object-id$$")
     if obj_id in GodotSynthProvider.synth_by_id:
-        return GodotSynthProvider.synth_by_id[obj_id]  # type: ignore
+        synth_prov = GodotSynthProvider.synth_by_id[obj_id]  # type: ignore
+        if isinstance(synth_prov, cls):
+            return synth_prov
+        else:
+            print(f"ERROR: Synth provider for {valobj.GetDisplayTypeName()} is not of type {cls.__name__}")
     return cls(valobj.GetNonSyntheticValue(), internal_dict, is_summary)  # type: ignore
 
 
@@ -388,7 +399,7 @@ class Variant_SyntheticProvider(GodotSynthProvider):
         self.variant_type = self._get_variant_type()
 
     @print_trace_dec
-    def get_summary(self):
+    def get_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, max_str_len=Opts.SUMMARY_STRING_MAX_LENGTH):
         if not self.check_valid(self.valobj):
             return INVALID_SUMMARY
         type = self.variant_type
@@ -884,7 +895,21 @@ def GenericShortSummary(
                 depth,
             )
         else:
-            return "{...}"
+            synth_provider_type = get_synthetic_provider_for_type(unqual_type_name)
+            # check if it's derived from _ListOfChildren_SyntheticProvider
+            # check if it's derived from _LinkedListLike_SyntheticProvider
+            
+            
+            if synth_provider_type is not None:
+                bases_str = str(synth_provider_type.__bases__)
+                is_subclass_of_list_of_children = "_ListOfChildren_SyntheticProvider" in bases_str
+                is_subclass_of_proxy = "_Proxy_SyntheticProvider" in bases_str
+                if is_subclass_of_list_of_children or is_subclass_of_proxy:
+                    synh_prov: _ListOfChildren_SyntheticProvider | _Proxy_SyntheticProvider = get_synth_provider_for_object(synth_provider_type, valobj, internal_dict, is_summary=True)
+                    return synh_prov.get_summary(max_children=3, max_str_len=MAX_LEN - START_SUMMARY_LENGTH)
+                # print the type name of the synth provider
+                # print the parent class of the synth provider
+            return unqual_type_name + "{...}"
     else:
         try:
             summ = valobj.GetSummary()
@@ -1070,19 +1095,19 @@ class HashMapElement_SyntheticProvider(GodotSynthProvider):
         return True
 
     @hashmap_trace
-    def get_summary(self) -> str:
+    def get_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, max_str_len=Opts.SUMMARY_STRING_MAX_LENGTH) -> str:
         if not self.check_valid(self.valobj):
             return INVALID_SUMMARY
         value = self.get_value()
         if value is None:
             return INVALID_SUMMARY
-        value_summary = GenericShortSummary(value, self.internal_dict)
+        value_summary = GenericShortSummary(value, self.internal_dict, summary_length=max_str_len, no_children=True)
         if hasattr(self, "is_summary") and self.key_val_element_style:  # only show the value for the summary
             return value_summary
         key = self.get_key()
         if key is None:
             return INVALID_SUMMARY
-        key_summary = GenericShortSummary(key, self.internal_dict)
+        key_summary = GenericShortSummary(key, self.internal_dict, summary_length=max_str_len - len(value_summary), no_children=True)
         return "[{0}]: {1}".format(key_summary, value_summary)
 
 
@@ -1153,7 +1178,7 @@ class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
         self._cached_size = value
 
     @print_trace_dec
-    def get_children_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY) -> str:
+    def get_children_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, max_str_len=Opts.SUMMARY_STRING_MAX_LENGTH) -> str:
         if self.num_elements == 0:
             return ""
         max_children = min(Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, self.num_elements)
@@ -1161,7 +1186,7 @@ class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
         summ_str = ""
         for i in range(max_children):
             summ_str += self._get_child_summary(i)
-            if len(summ_str) > Opts.SUMMARY_STRING_MAX_LENGTH:
+            if len(summ_str) > max_str_len:
                 break
             if max_children != 1 and i < max_children - 1:
                 summ_str += ", "
@@ -1189,14 +1214,14 @@ class _ListOfChildren_SyntheticProvider(GodotSynthProvider):
             return None
 
     @print_trace_dec
-    def get_summary(self) -> str:
+    def get_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, max_str_len=Opts.SUMMARY_STRING_MAX_LENGTH) -> str:
         if not self.check_valid(self.valobj):
             return INVALID_SUMMARY
         return LIST_FORMAT.format(
             type_name=self.typename,
             type_no_template=self.typename.split("<")[0],
             size=self.num_elements,
-            children=self.get_children_summary(),
+            children=self.get_children_summary(max_children, max_str_len),
         )
 
 
@@ -1926,11 +1951,11 @@ class _Proxy_SyntheticProvider(GodotSynthProvider):
     def check_valid(self, obj: SBValue) -> bool:
         return not(not(self.synth_proxy and self.synth_proxy.check_valid(self.synth_proxy.valobj)))
 
-    def get_summary(self):
+    def get_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, max_str_len=Opts.SUMMARY_STRING_MAX_LENGTH):
         if not self.synth_proxy or not self.check_valid(self.valobj):
             return INVALID_SUMMARY
         size = self.synth_proxy.num_elements
-        children_summary = self.synth_proxy.get_children_summary()
+        children_summary = self.synth_proxy.get_children_summary(max_children, max_str_len)
         type_name = self.valobj.GetType().GetUnqualifiedType().GetDisplayTypeName()
         return LIST_FORMAT.format(
             type_name=type_name,
@@ -1938,7 +1963,6 @@ class _Proxy_SyntheticProvider(GodotSynthProvider):
             size=size,
             children=children_summary,
         )
-
     def num_children(self, max=UINT32_MAX):
         if self.synth_proxy:
             return self.synth_proxy.num_children()
@@ -2017,7 +2041,7 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
             self.read_pos = self.valobj.GetChildMemberWithName("read_pos").GetValueAsSigned() & self.size_mask
             self.write_pos = self.valobj.GetChildMemberWithName("write_pos").GetValueAsSigned() & self.size_mask
 
-    def get_summary(self):
+    def get_summary(self, max_children=Opts.MAX_AMOUNT_OF_CHILDREN_IN_SUMMARY, max_str_len=Opts.SUMMARY_STRING_MAX_LENGTH):
         if not self.check_valid(self.valobj):
             return INVALID_SUMMARY
         children_summary = ""
@@ -2026,7 +2050,7 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
             size = self.synth_proxy.num_elements
             read_pos_summary = "<read_pos:{0}>".format(self.read_pos)
             write_pos_summary = "<write_pos:{0}>".format(self.write_pos)
-            proxy_children_sum = self.synth_proxy.get_children_summary()
+            proxy_children_sum = self.synth_proxy.get_children_summary(max_children, max_str_len)
             children_summary = f"{read_pos_summary} {write_pos_summary} {proxy_children_sum}"
         return LIST_FORMAT.format(
             type_name=self.valobj.GetType().GetUnqualifiedType().GetDisplayTypeName(),
