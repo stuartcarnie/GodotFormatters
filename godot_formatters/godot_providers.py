@@ -19,7 +19,7 @@ from types import TracebackType
 from typing import Any, Callable, Generic, Never, TypeVar, final, Optional
 
 # fmt: off
-from lldb import (SBCommandReturnObject, SBExecutionContext, SBPlatform, SBTypeCategory, SBValue, eFormatBytes, eFormatCString, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
+from lldb import (SBCommandReturnObject, SBExecutionContext, SBPlatform, SBTypeCategory, SBValue, eFormatBytes, eFormatCString, eFormatUnicode16, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
                   eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, 
                   eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, 
                   eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, 
@@ -799,6 +799,7 @@ def String_SummaryProvider(valobj: SBValue, internal_dict):
 def CharString_SummaryProvider(valobj: SBValue, internal_dict):
     _cowdata: SBValue = valobj.GetChildMemberWithName("_cowdata")
     size = get_cowdata_size_or_none(_cowdata)
+    type = valobj.GetType()
     if size is None:
         # check if this is a pointer to a pointer
         type = valobj.GetType()
@@ -807,12 +808,17 @@ def CharString_SummaryProvider(valobj: SBValue, internal_dict):
         return INVALID_SUMMARY
     if size == 0:
         return EMPTY_SUMMARY
-
+    template_type = type.GetTemplateArgumentType(0)
+    format = eFormatCString
+    if template_type == eBasicTypeChar16 or template_type == eBasicTypeWChar:
+        format = eFormatUnicode16
+    elif template_type == eBasicTypeChar32:
+        format = eFormatUnicode32
     # While cowdata has been promoted to 64-bits, this is still the limit for strings
     if STRINGS_STILL_32_BIT and size > INT32_MAX:
         return INVALID_SUMMARY
     _ptr: SBValue = _cowdata.GetChildMemberWithName("_ptr")
-    _ptr.format = eFormatCString
+    _ptr.format = format
     if Opts.SANITIZE_STRING_SUMMARY:
         ret = _ptr.GetSummary()
         if ret is None:

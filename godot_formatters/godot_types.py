@@ -46,7 +46,7 @@ SYNTHETIC_PROVIDERS: dict[str,type] = {
 
 SUMMARY_PROVIDERS: dict[str,object] = {
     "^(::)?String$":        String_SummaryProvider,
-    "^(::)?CharString$":    CharString_SummaryProvider,
+    "^(::)?CharString(T<.+>)?$":    CharString_SummaryProvider,
     "^(::)?Ref<.+>$":       Ref_SummaryProvider,
     "^(::)?Vector2$":       Vector2_SummaryProvider,
     "^(::)?Vector2i$":      Vector2i_SummaryProvider,
