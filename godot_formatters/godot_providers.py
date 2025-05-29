@@ -103,7 +103,8 @@ class VariantType(Enum):
     PACKED_VECTOR2_ARRAY = 35
     PACKED_VECTOR3_ARRAY = 36
     PACKED_COLOR_ARRAY = 37
-    VARIANT_MAX = 38
+    PACKED_VECTOR4_ARRAY = 38
+    VARIANT_MAX = 39
 
 
 @print_trace_dec
@@ -293,6 +294,12 @@ def Variant_GetValue(valobj: SBValue):
                 "packedColorArrayref", packed_array_addr, packedColorArrayType
             )
             return packedColorArray.GetChildMemberWithName("array")
+        elif type == VariantType.PACKED_VECTOR4_ARRAY.value:
+            packedVector4ArrayType: SBType = target.FindFirstType("Variant::PackedArrayRef<Vector4>")
+            packedVector4Array: SBValue = target.CreateValueFromAddress(
+                "packedVector4Arrayref", packed_array_addr, packedVector4ArrayType
+            )
+            return packedVector4Array.GetChildMemberWithName("array")
     return None
 
 
