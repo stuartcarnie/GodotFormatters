@@ -1,6 +1,6 @@
 from importlib import reload
 
-from godot_formatters.godot_gdext_providers import GDExtGenericSynthProvider, GDExtGenericSummaryProvider, GDExtOpaqueSummaryProvider, GDExtRIDSummaryProvider
+from godot_formatters.godot_gdext_providers import GDExtBaseGDObjectSynthProvider, GDExtGenericSynthProvider, GDExtGenericSummaryProvider, GDExtOpaqueSummaryProvider, GDExtRIDSummaryProvider, GDExtGDObjectSynthProvider 
 
 # opaque types with synthetic providers
 GDEXT_VARIANT_PATTERN:str = f"^godot_core::builtin::variant::Variant$"
@@ -36,6 +36,9 @@ GDEXT_BASIS_PATTERN:str = "^godot_core::builtin::basis::Basis$"
 GDEXT_TRANSFORM2D_PATTERN:str = "^godot_core::builtin::transform2d::Transform2D$"
 GDEXT_TRANSFORM3D_PATTERN:str = "^godot_core::builtin::transform3d::Transform3D$"
 
+GDEXT_BASE_PATTERN:str = "^godot_core::obj::base::Base<.+>$"
+GDEXT_GD_PATTERN:str = "^godot_core::obj::gd::Gd<.+>$"
+GDEXT_RAW_GD_PATTERN:str = "^godot_core::obj::raw_gd::RawGd<.+>$"
 
 
 
@@ -44,6 +47,9 @@ GDEXT_SYNTHETIC_PROVIDERS: dict[str,type] = {
     GDEXT_DICTIONARY_PATTERN: GDExtGenericSynthProvider,
     GDEXT_ARRAY_PATTERN: GDExtGenericSynthProvider,
     GDEXT_VECTOR_PATTERN: GDExtGenericSynthProvider,
+    GDEXT_RAW_GD_PATTERN: GDExtGDObjectSynthProvider,
+    GDEXT_GD_PATTERN: GDExtGDObjectSynthProvider,
+    GDEXT_BASE_PATTERN: GDExtBaseGDObjectSynthProvider,
 }
 
 GDEXT_SUMMARY_PROVIDERS: dict[str,object] = {

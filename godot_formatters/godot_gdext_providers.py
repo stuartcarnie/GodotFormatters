@@ -1,6 +1,6 @@
 # fmt: off
 from types import TracebackType
-from typing import Callable, final, Optional
+from typing import Callable, final, Optional, override
 
 from lldb import (SBValue)
 # fmt: on
@@ -10,7 +10,7 @@ from typing import TypeVar, Generic, List
 
 from godot_formatters.options import Opts, INVALID_SUMMARY, NIL_SUMMARY
 from godot_formatters.utils import print_verbose
-from godot_formatters.godot_providers import get_synth_provider_for_object, GodotSynthProvider
+from godot_formatters.godot_providers import GenericShortSummary, get_synth_provider_for_object, GodotSynthProvider
 
 UINT32_MAX = 4294967295
 INT32_MAX = 2147483647
@@ -25,7 +25,10 @@ def get_godot_type_name(valobj: SBValue) -> str:
     # check if it's a template type first
     if '<' in valobj.GetType().GetName():
         rs_type_name = rs_type_name.split("<", 1)[0]
-    type_name = rs_type_name.split(sep="::")[-1]
+    return get_godot_type_name_from_str(rs_type_name)
+        
+def get_godot_type_name_from_str(type_name: str) -> str:
+    type_name = type_name.split(sep="::")[-1]
     if (type_name == "GString"):
         type_name = "String"
     elif (type_name == "Rid"):
@@ -93,6 +96,74 @@ class GDExtGenericSynthProvider(GodotSynthProvider):
     
     def get_child_at_index(self, idx: int) -> SBValue:
         return self.synth_provider.get_child_at_index(idx)
+    
+    
+def get_real_valobj_from_raw_gd(valobj: SBValue) -> SBValue:
+    target = valobj.GetTarget()
+    type_name = get_godot_type_name_from_str(valobj.GetType().GetTemplateArgumentType(0).GetName())
+    variant_cpptype = target.FindFirstType(type_name)
+    if not variant_cpptype or not variant_cpptype.IsValid():
+        raise Exception(f"ERROR: Variant type is not valid for {type_name}")
+    raw = valobj.GetChildAtIndex(0)
+    if not raw or not raw.IsValid():
+        raise Exception("ERROR: raw is not valid")
+
+    obj = raw.GetChildAtIndex(0)
+    if not obj or not obj.IsValid():
+        raise Exception("ERROR: obj is not valid")
+    
+    obj_pointer = obj.GetChildAtIndex(0)
+    if not obj_pointer or not obj_pointer.IsValid():
+        raise Exception("ERROR: Obj pointer is not valid")
+    val: int = obj_pointer.GetValueAsUnsigned()
+    if val == 0:
+        raise Exception("ERROR: Obj pointer is not valid")
+    return obj_pointer.Cast(variant_cpptype)
+
+class GDExtGDObjectSynthProvider(GodotSynthProvider):
+    real_valobj: SBValue
+
+    def __init__(
+        self,
+        valobj: SBValue,
+        internal_dict,
+        is_summary=False
+    ):
+        super().__init__(valobj, internal_dict, is_summary)
+        self.update()
+
+    def update(self):
+        self.real_valobj = get_real_valobj_from_raw_gd(self.valobj)
+
+        
+    def get_summary(self, max_children=UINT32_MAX, max_str_len=Opts.SUMMARY_STRING_MAX_LENGTH):
+        return GenericShortSummary(self.real_valobj, self.internal_dict, max_str_len, False, False)
+    
+    def num_children(self, max=UINT32_MAX):
+        return 1
+    
+    def has_children(self):
+        return True
+    
+    def get_index_of_child(self, name: str):
+        return 0
+    
+    def get_child_at_index(self, idx: int) -> SBValue:
+        return self.real_valobj
+    
+    
+class GDExtBaseGDObjectSynthProvider(GDExtGDObjectSynthProvider):
+    # @override
+    def update(self):
+        obj = self.valobj.GetChildAtIndex(0)
+        if not obj or not obj.IsValid():
+            raise Exception("ERROR: raw is not valid")
+
+        value = obj.GetChildAtIndex(0)
+        if not value or not value.IsValid():
+            raise Exception("ERROR: obj is not valid")
+        self.real_valobj = get_real_valobj_from_raw_gd(value)
+
     
 def GDExtRIDSummaryProvider(valobj: SBValue, internal_dict):
     # TODO: support non-clang enums
