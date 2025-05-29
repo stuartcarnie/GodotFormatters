@@ -35,7 +35,20 @@ godot_formatters.godot_providers.get_synthetic_provider_for_type = get_synthetic
 godot_formatters.godot_providers.get_summary_provider_for_type = get_summary_provider_for_type
 
 
-from lldb import SBDebugger
+# GDEXT STUFF
+import godot_formatters.godot_gdext_providers
+godot_formatters.godot_gdext_providers = reload(godot_formatters.godot_gdext_providers)
+from godot_formatters.godot_gdext_providers import *
+
+import godot_formatters.godot_gdext_types
+godot_formatters.godot_gdext_types = reload(godot_formatters.godot_gdext_types)
+from godot_formatters.godot_gdext_types import *
+
+godot_formatters.godot_gdext_providers.get_godot_synthetic_provider_for_type = get_synthetic_provider_for_type
+godot_formatters.godot_gdext_providers.get_godot_summary_provider_for_type = get_summary_provider_for_type
+
+
+from lldb import SBDebugger, SBTypeCategory
 from lldb import (SBCommandReturnObject, SBExecutionContext, SBTypeCategory, eFormatBytes, eFormatCString, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
                   eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, 
                   eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, 
@@ -59,23 +72,14 @@ def clear_globals():
         constructed_the_table = False
     except Exception as e:
         print("Error clearing globals: " + str(e))
-
-def __lldb_init_module(debugger: SBDebugger, dict):
-    clear_globals()
-    global cpp_category
-
-    cpp_category = debugger.GetDefaultCategory()
-    register_all_synth_and_summary_providers(debugger)
-    monkey_patch_optparse()
-    print(f"{FORMATTER_NAME} synth and summary types have been loaded")
-    # for some godforsaken reason, the container name doesn't work through vscode repl unless it's aliased
-    debugger.HandleCommand(f'command container add {CONTAINER_NAME} -h "{FORMATTER_NAME} commands" -H "{FORMATTER_NAME} <subcommand> [<subcommand-options>]" -o')
-    debugger.HandleCommand(f'command alias {FORMATTER_NAME} {CONTAINER_NAME}')
-    SetOptsCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
-    GetOptsCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
-    ReloadCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
-
-
+        
+        
+        
+def printAllCategories(debugger: SBDebugger):
+    count = debugger.GetNumCategories()
+    for i in range(count):
+        category = debugger.GetCategoryAtIndex(i)
+        print("category: ", category.name)
 
 
 # ********************************************************
@@ -104,15 +108,14 @@ def get_template_regex(name: str, min, max) -> str:
 # fmt: on
 
 module = sys.modules[__name__]
-cpp_category: SBTypeCategory
 
 
-def attach_synthetic_to_type(type_name, synth_class, is_regex=True):
-    global module, cpp_category
+def attach_synthetic_to_type(module, category: SBTypeCategory, type_name, synth_class, is_regex=True):
     # print_trace('attaching synthetic %s to "%s", is_regex=%s' %(synth_class.__name__, type_name, is_regex))
-    synth = SBTypeSynthetic.CreateWithClassName(__name__ + "." + synth_class.__name__)
+    synth = SBTypeSynthetic.CreateWithClassName(module.__name__ + "." + synth_class.__name__)
     synth.SetOptions(eTypeOptionCascade)
-    cpp_category.AddTypeSynthetic(SBTypeNameSpecifier(type_name, is_regex), synth)
+    if not category.AddTypeSynthetic(SBTypeNameSpecifier(type_name, is_regex), synth):
+        print(f"Failed to add synthetic for {type_name}")
 
     def summary_fn(valobj, dict):
         return get_synth_summary(synth_class, valobj, dict)
@@ -123,16 +126,15 @@ def attach_synthetic_to_type(type_name, synth_class, is_regex=True):
     print_trace(f"attaching summary {summary_fn.__name__} to {type_name}, is_regex={is_regex}")
     summary = SBTypeSummary.CreateWithFunctionName(__name__ + "." + summary_fn.__name__)
     summary.SetOptions(eTypeOptionCascade)
-    cpp_category.AddTypeSummary(SBTypeNameSpecifier(type_name, is_regex), summary)
+    if not category.AddTypeSummary(SBTypeNameSpecifier(type_name, is_regex), summary):
+        print(f"Failed to add summary for {type_name}")
 
     # attach_summary_to_type(summary_fn, type_name, is_regex)
 
 
-def attach_summary_to_type(type_name, real_summary_fn, is_regex=False, real_fn_name: Optional[str] = None):
-    global module, cpp_category
+def attach_summary_to_type(module, category: SBTypeCategory, type_name, real_summary_fn, is_regex=False, real_fn_name: Optional[str] = None):
     if not real_fn_name:
         real_fn_name = str(real_summary_fn.__qualname__)
-
     def __spfunc(valobj, dict):
         try:
             return real_summary_fn(valobj, dict)
@@ -148,25 +150,29 @@ def attach_summary_to_type(type_name, real_summary_fn, is_regex=False, real_fn_n
 
     summary = SBTypeSummary.CreateWithFunctionName(__name__ + "." + __spfunc.__name__)
     summary.SetOptions(eTypeOptionCascade)
-    cpp_category.AddTypeSummary(SBTypeNameSpecifier(type_name, is_regex), summary)
+    if not category.AddTypeSummary(SBTypeNameSpecifier(type_name, is_regex), summary):
+        print(f"Failed to add summary for {type_name}")
 
 
 
 
-def register_all_synth_and_summary_providers(debugger: SBDebugger):
-    force_compat(Opts.MIDEBUGGER_COMPAT)
+def register_all_synth_and_summary_providers(module, category: SBTypeCategory, debugger: SBDebugger, SUMMARY_PROVIDERS, SYNTHETIC_PROVIDERS):
     for key in SUMMARY_PROVIDERS:
         try:
-            # remove the current type summary if it exists
-            debugger.HandleCommand(f"type summary delete {key}")
-            attach_summary_to_type(key, SUMMARY_PROVIDERS[key], True)
+            if category.DeleteTypeSummary(SBTypeNameSpecifier(key, True)):
+                print_trace(f"Deleted summary for {key}")
+            else:
+                print_trace(f"No summary found for {key}")
+            attach_summary_to_type(module, category, key, SUMMARY_PROVIDERS[key], True)
         except Exception as e:
             print_verbose("EXCEPTION: " + str(e))
     for key in SYNTHETIC_PROVIDERS:
         try:
-            # remove the current type synthetic if it exists
-            debugger.HandleCommand(f"type synthetic delete {key}")
-            attach_synthetic_to_type(key, SYNTHETIC_PROVIDERS[key], True)
+            if category.DeleteTypeSummary(SBTypeNameSpecifier(key, True)):
+                print_trace(f"Deleted synthetic for {key}")
+            else:
+                print_trace(f"No synthetic found for {key}")
+            attach_synthetic_to_type(module, category, key, SYNTHETIC_PROVIDERS[key], True)
         except Exception as e:
             print_verbose("EXCEPTION st: " + str(e))
 
@@ -247,7 +253,7 @@ class ReloadCommand(_LLDBCommandBase):
     ):
         # Use the Shell Lexer to properly parse up command options just like a
         # shell would
-        register_all_synth_and_summary_providers(debugger)
+        register_all_providers(debugger)
         # not returning anything is akin to returning success
         return
 
@@ -372,7 +378,33 @@ class SetOptsCommand(_LLDBCommandBase):
             return
 
         print("Options have been set. Resetting formatters...")
-        register_all_synth_and_summary_providers(debugger)
+        register_all_providers(debugger)
         result.SetStatus(eReturnStatusSuccessFinishNoResult)
         # not returning anything is akin to returning success
         return
+    
+
+    
+def register_all_providers(debugger: SBDebugger):
+    global module
+    cpp_category: SBTypeCategory = debugger.GetDefaultCategory()
+    rust_category: SBTypeCategory = debugger.GetCategory("Rust")
+    register_all_synth_and_summary_providers(module, cpp_category, debugger, SUMMARY_PROVIDERS, SYNTHETIC_PROVIDERS)
+    register_all_synth_and_summary_providers(module, rust_category, debugger, GDEXT_SUMMARY_PROVIDERS, GDEXT_SYNTHETIC_PROVIDERS)
+    #GDEXT STUFF
+
+
+def __lldb_init_module(debugger: SBDebugger, dict):
+    clear_globals()
+    monkey_patch_optparse()
+    register_all_providers(debugger)
+    print(f"{FORMATTER_NAME} synth and summary types have been loaded")
+    # for some godforsaken reason, the container name doesn't work through vscode repl unless it's aliased
+    debugger.HandleCommand(f'command container add {CONTAINER_NAME} -h "{FORMATTER_NAME} commands" -H "{FORMATTER_NAME} <subcommand> [<subcommand-options>]" -o')
+    debugger.HandleCommand(f'command alias {FORMATTER_NAME} {CONTAINER_NAME}')
+    SetOptsCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
+    GetOptsCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
+    ReloadCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
+
+
+
