@@ -368,7 +368,7 @@ def get_synth_provider_for_object(cls: type[T], valobj: SBValue, internal_dict, 
         if isinstance(synth_prov, cls):
             return synth_prov
         else:
-            print(f"ERROR: Synth provider for {valobj.GetDisplayTypeName()} is not of type {cls.__name__}")
+            print(f"ERROR: Synth provider for {valobj.GetDisplayTypeName()} is not of type {cls.__name__}, is {type(synth_prov).__name__}")
     return cls(valobj.GetNonSyntheticValue(), internal_dict, is_summary)  # type: ignore
 
 
@@ -457,7 +457,7 @@ def Ref_SummaryProvider(valobj: SBValue, internal_dict):
     return GenericShortSummary(valobj, internal_dict)
 
 def get_summary_or_invalid_summary(valobj: SBValue) -> str:
-    if not_null_check(valobj):
+    if not not_null_check(valobj):
         return INVALID_SUMMARY
     summary = valobj.GetSummary()
     return summary
@@ -469,8 +469,10 @@ def NodePath_SummaryProvider(valobj: SBValue, internal_dict):
         return NULL_SUMMARY
     if not is_valid_pointer(data):
         return INVALID_SUMMARY
-    path = Vector_SyntheticProvider(data.GetChildMemberWithName("path").GetNonSyntheticValue(), internal_dict)
-    subpath = Vector_SyntheticProvider(data.GetChildMemberWithName("subpath").GetNonSyntheticValue(), internal_dict)
+    path_obj = data.GetChildMemberWithName("path")
+    path = Vector_SyntheticProvider(path_obj.GetNonSyntheticValue(), internal_dict)
+    subpath_obj = data.GetChildMemberWithName("subpath")
+    subpath = Vector_SyntheticProvider(subpath_obj.GetNonSyntheticValue(), internal_dict)
     path_size = path.num_children()
     subpath_size = subpath.num_children()
     if path_size == 0 and subpath_size == 0:
