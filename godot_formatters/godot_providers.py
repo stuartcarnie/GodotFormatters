@@ -1980,7 +1980,7 @@ class _Proxy_SyntheticProvider(GodotSynthProvider):
         )
     def num_children(self, max=UINT32_MAX):
         if self.synth_proxy:
-            return self.synth_proxy.num_children()
+            return self.synth_proxy.num_children(max)
         return 0
 
     def has_children(self):
