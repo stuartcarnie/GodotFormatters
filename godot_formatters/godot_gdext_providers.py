@@ -1,6 +1,6 @@
 # fmt: off
 from types import TracebackType
-from typing import Callable, final, Optional, override
+from typing import Callable, final, Optional
 
 from lldb import (SBValue)
 # fmt: on
