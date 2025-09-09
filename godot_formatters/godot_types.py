@@ -13,6 +13,7 @@ ARRAY_PATTERN:str = "^(::)?Array$"
 TYPEDARRAY_PATTERN:str = "^(::)?TypedArray<.+>$"
 DICTIONARY_PATTERN:str = "^(::)?Dictionary$"
 VECTOR_PATTERN:str = "^(::)?Vector<.+>$"
+VECTOR_VIEW_PATTERN:str = "^(::)?VectorView<.+>$"
 PACKED_ARRAY_PATTERN:str = "^(::)?Packed\\w+Array$"
 HASH_MAP_ELEMENT_PATTERN:str = "^(::)?HashMapElement<.+,.+>$"
 KEY_VALUE_PATTERN:str = "^(::)?KeyValue<.+,.+>$"
@@ -30,6 +31,7 @@ SYNTHETIC_PROVIDERS: dict[str,type] = {
     "^(::)?Variant$":          Variant_SyntheticProvider,
     # HASH_MAP_ELEMENT_PATTERN:  HashMapElement_SyntheticProvider,
     VECTOR_PATTERN:            Vector_SyntheticProvider,
+    VECTOR_VIEW_PATTERN:       VectorView_SyntheticProvider,
     PACKED_ARRAY_PATTERN:      Vector_SyntheticProvider,
     LIST_PATTERN:              List_SyntheticProvider,
     HASHSET_PATTERN:           HashSet_SyntheticProvider,

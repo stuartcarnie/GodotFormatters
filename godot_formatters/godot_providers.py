@@ -1427,6 +1427,18 @@ class LocalVector_SyntheticProvider(_ArrayLike_SyntheticProvider):
         return obj.GetChildMemberWithName("count").GetValueAsUnsigned(0)
 
 
+class VectorView_SyntheticProvider(_ArrayLike_SyntheticProvider):
+    @print_trace_dec
+    def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
+        super().__init__(valobj, internal_dict, is_summary)
+
+    def get_ptr(self, obj: SBValue) -> SBValue:
+        return obj.GetChildMemberWithName("_ptr")
+
+    def get_len(self, obj: SBValue):
+        return obj.GetChildMemberWithName("_size").GetValueAsUnsigned(0)
+
+
 class HashSet_SyntheticProvider(_ArrayLike_SyntheticProvider):
     def get_ptr(self, obj: SBValue) -> SBValue:
         return obj.GetChildMemberWithName("keys")
