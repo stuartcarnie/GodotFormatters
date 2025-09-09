@@ -16,14 +16,14 @@ import json
 from enum import Enum
 import weakref
 from types import TracebackType
-from typing import Any, Callable, Generic, Never, TypeVar, final, Optional
+from typing import Any, Callable, Generic, TypeVar, final, Optional
 
 # fmt: off
-from lldb import (SBCommandReturnObject, SBExecutionContext, SBPlatform, SBTypeCategory, SBValue, eFormatBytes, eFormatCString, eFormatUnicode16, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
-                  eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, 
-                  eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, 
-                  eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, 
-                  eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, eReturnStatusSuccessFinishNoResult, eReturnStatusSuccessFinishResult, 
+from lldb import (SBCommandReturnObject, SBExecutionContext, SBPlatform, SBTypeCategory, SBValue, eFormatBytes, eFormatCString, eFormatUnicode16, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar,
+                  eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32,
+                  eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong,
+                  eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble,
+                  eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, eReturnStatusSuccessFinishNoResult, eReturnStatusSuccessFinishResult,
                   eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer, eTypeOptionCascade)
 from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger, SBTypeSummary, SBTypeSynthetic, SBTypeNameSpecifier)
 # fmt: on
@@ -913,8 +913,8 @@ def GenericShortSummary(
             synth_provider_type = get_synthetic_provider_for_type(unqual_type_name)
             # check if it's derived from _ListOfChildren_SyntheticProvider
             # check if it's derived from _LinkedListLike_SyntheticProvider
-            
-            
+
+
             if synth_provider_type is not None:
                 bases_str = str(synth_provider_type.__bases__)
                 is_subclass_of_list_of_children = "_ListOfChildren_SyntheticProvider" in bases_str
@@ -1609,7 +1609,7 @@ class _LinkedListLike_SyntheticProvider(_ListOfChildren_SyntheticProvider):
             if start > size:
                 return
             element = self.cached_elements[start]
-            
+
         for _ in range(start + 1, size):
             element = self.get_list_element_next(element) if element else None
             if not element:
@@ -1745,7 +1745,7 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
     num_elements: int = 0
     no_cache: bool = False
     cached_skip_length: int = -1
-    
+
     @hashmap_trace
     def __init__(self, valobj: SBValue, internal_dict, is_summary=False):
         super().__init__(valobj, internal_dict, is_summary)
@@ -1835,7 +1835,7 @@ class HashMap_SyntheticProvider(_LinkedListLike_SyntheticProvider):
         key_summary = GenericShortSummary(key, self.internal_dict)
         value_summary = GenericShortSummary(value, self.internal_dict)
         return "[{0}]: {1}".format(key_summary, value_summary)
-    
+
     def get_offset_of_element_data(self, element: SBValue) -> int:
         if self.cached_skip_length >= 0:
             return self.cached_skip_length
@@ -1914,7 +1914,7 @@ class RBMap_SyntheticProvider(HashMap_SyntheticProvider):
 
     def get_tail(self, obj: SBValue) -> SBValue:
         raise Exception("Not implemented, should not be called")
-    
+
     def get_offset_of_element_data(self, element: SBValue) -> int:
         if self.cached_skip_length >= 0:
             return self.cached_skip_length
@@ -2041,7 +2041,7 @@ class RingBuffer_SyntheticProvider(_Proxy_SyntheticProvider):
     read_pos: int = 0
     write_pos: int = 0
     size_mask: int = 0
-    
+
     def update(self) -> None:
         self.synth_proxy: Optional[Vector_SyntheticProvider] = None
         self.read_pos = 0

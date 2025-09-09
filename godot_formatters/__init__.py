@@ -5,29 +5,29 @@ from importlib import reload
 
 import godot_formatters.options
 
-godot_formatters.options = reload(godot_formatters.options)
+# godot_formatters.options = reload(godot_formatters.options)
 from godot_formatters.options import *
 
 
 import godot_formatters.utils
 
-godot_formatters.utils = reload(godot_formatters.utils)
+# godot_formatters.utils = reload(godot_formatters.utils)
 from godot_formatters.utils import *
 
 
 import godot_formatters.godot_providers
 
 # we have to force reload the dependent modules to make lldb update the providers if we're re-loading the module
-godot_formatters.godot_providers = reload(godot_formatters.godot_providers)
+# godot_formatters.godot_providers = reload(godot_formatters.godot_providers)
 from godot_formatters.godot_providers import *
 
 import godot_formatters.godot_types
 
-godot_formatters.godot_types = reload(godot_formatters.godot_types)
+# godot_formatters.godot_types = reload(godot_formatters.godot_types)
 from godot_formatters.godot_types import *
 
 import godot_formatters.lookup
-godot_formatters.lookup = reload(godot_formatters.lookup)
+# godot_formatters.lookup = reload(godot_formatters.lookup)
 from godot_formatters.lookup import *
 
 
@@ -37,11 +37,11 @@ godot_formatters.godot_providers.get_summary_provider_for_type = get_summary_pro
 
 # GDEXT STUFF
 import godot_formatters.godot_gdext_providers
-godot_formatters.godot_gdext_providers = reload(godot_formatters.godot_gdext_providers)
+# godot_formatters.godot_gdext_providers = reload(godot_formatters.godot_gdext_providers)
 from godot_formatters.godot_gdext_providers import *
 
 import godot_formatters.godot_gdext_types
-godot_formatters.godot_gdext_types = reload(godot_formatters.godot_gdext_types)
+# godot_formatters.godot_gdext_types = reload(godot_formatters.godot_gdext_types)
 from godot_formatters.godot_gdext_types import *
 
 godot_formatters.godot_gdext_providers.get_godot_synthetic_provider_for_type = get_synthetic_provider_for_type
@@ -49,11 +49,11 @@ godot_formatters.godot_gdext_providers.get_godot_summary_provider_for_type = get
 
 
 from lldb import SBDebugger, SBTypeCategory
-from lldb import (SBCommandReturnObject, SBExecutionContext, SBTypeCategory, eFormatBytes, eFormatCString, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar, 
-                  eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32, 
-                  eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong, 
-                  eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble, 
-                  eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, eReturnStatusSuccessFinishNoResult, eReturnStatusSuccessFinishResult, 
+from lldb import (SBCommandReturnObject, SBExecutionContext, SBTypeCategory, eFormatBytes, eFormatCString, eFormatUnicode32, eNoDynamicValues, eDynamicDontRunTarget, eDynamicCanRunTarget, eBasicTypeInvalid, eBasicTypeVoid, eBasicTypeChar,
+                  eBasicTypeSignedChar, eBasicTypeUnsignedChar, eBasicTypeWChar, eBasicTypeSignedWChar, eBasicTypeUnsignedWChar, eBasicTypeChar16, eBasicTypeChar32,
+                  eBasicTypeChar8, eBasicTypeShort, eBasicTypeUnsignedShort, eBasicTypeInt, eBasicTypeUnsignedInt, eBasicTypeLong, eBasicTypeUnsignedLong, eBasicTypeLongLong,
+                  eBasicTypeUnsignedLongLong, eBasicTypeInt128, eBasicTypeUnsignedInt128, eBasicTypeBool, eBasicTypeHalf, eBasicTypeFloat, eBasicTypeDouble, eBasicTypeLongDouble,
+                  eBasicTypeFloatComplex, eBasicTypeDoubleComplex, eBasicTypeLongDoubleComplex, eBasicTypeObjCID, eBasicTypeObjCClass, eBasicTypeObjCSel, eBasicTypeNullPtr, eReturnStatusSuccessFinishNoResult, eReturnStatusSuccessFinishResult,
                   eTypeClassClass, eTypeClassEnumeration, eTypeClassPointer, eTypeOptionCascade)
 from lldb import ( SBValue, SBAddress, SBData, SBType, SBTypeEnumMember, SBTypeEnumMemberList, SBSyntheticValueProvider, SBError, SBTarget, SBDebugger, SBTypeSummary, SBTypeSynthetic, SBTypeNameSpecifier)
 
@@ -72,9 +72,9 @@ def clear_globals():
         constructed_the_table = False
     except Exception as e:
         print("Error clearing globals: " + str(e))
-        
-        
-        
+
+
+
 def printAllCategories(debugger: SBDebugger):
     count = debugger.GetNumCategories()
     for i in range(count):
@@ -382,9 +382,9 @@ class SetOptsCommand(_LLDBCommandBase):
         result.SetStatus(eReturnStatusSuccessFinishNoResult)
         # not returning anything is akin to returning success
         return
-    
 
-    
+
+
 def register_all_providers(debugger: SBDebugger):
     global module
     cpp_category: SBTypeCategory = debugger.GetDefaultCategory()
@@ -405,6 +405,3 @@ def __lldb_init_module(debugger: SBDebugger, dict):
     SetOptsCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
     GetOptsCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
     ReloadCommand.register_lldb_command(debugger, __name__, CONTAINER_NAME, FORMATTER_NAME)
-
-
-
